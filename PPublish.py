@@ -20,20 +20,80 @@ def getFirst_Letter(string):
 		return None
 	return match.start()
 
+
+def Rename(old_name, new_name):
+	changed=False
+	while not changed:
+		try:
+			os.rename(old_name, new_name)
+			changed=True
+		except PermissionError:
+			print(old_name+" in use please resolve")
+			time.Sleep(1)
+			continue
+		except Exception as e:
+			print("Could not rename : "+str(e))
+			return True
+	return False
+
+def Delete(file):
+	changed=False
+	while not changed:
+		try:
+			os.remove(file)
+			changed=True
+		except PermissionError:
+			print(old_name+" in use please resolve")
+			time.Sleep(1)
+			continue
+		except FileNotFoundError:
+			break
+		except Exception as e:
+			print("Could not remove : "+str(e))
+			return True
+	return False
+
+def File_hash(file):
+	with open(file, "rb") as f:
+		file_hash = hashlib.md5()
+		while chunk := f.read(8192):
+			file_hash.update(chunk)
+
+		return file_hash.hexdigest()
+
+class Folder:
+	def __init__(self, path):
+		self.path=path
+		if not os.path.isdir(path):
+			os.mkdir(path)
+		self.files = []
+
+	def delete(self):
+		Delete(self.path)
+
+	def rename(self, new_name):
+		Rename(self.path, new_name)
+		self.path=new_name
+
 class File:
 	def __init__(self, path):
 		self.path=path
 		self.valid=os.path.isfile(path)
-		if self.valid:
-			self.md5=self.hash()
 
-	def hash(self):
-		with open(self.path, "rb") as f:
-			file_hash = hashlib.md5()
-			while chunk := f.read(8192):
-				file_hash.update(chunk)
+	def load(self):
+		pass
 
-			return file_hash.hexdigest()
+	def path_change(self, new_path):
+		self.path=new_path
+		self.load()
+
+	def rename(self, new_path):
+		Rename(self.path, new_path)
+		self.path_change(new_path)
+
+	def delete(self):
+		Delete(self.path)
+
 
 	def __eq__(self, Other):
 		if type(Other)==type(self):
@@ -41,20 +101,87 @@ class File:
 		return False
 
 
-class Track(File):
-	def __init__(self, file, index):
+class Tracker:
+	def __init__(self, callback):
+		self.callback=callback
+	def check(self, docallback=True):
+		pass
+
+class Tracker_File(Tracker):
+	def __init__(self, path, callback):
+		super().__init__(callback)
+		self.file=File
+		self.md5=None
+
+	def check(self, docallback=True):
+		# check if exists
+		if not os.path.isfile(self.file):
+			if docallback and self.md5 != None:
+				self.callback.handleRemove()
+			self.md5=None
+
+		else:
+			# is created
+			if self.md5==None:
+				self.md5=File_hash(self.path)
+				if docallback:
+					self.callback.handleCreate()
+
+			# is edited
+			elif md5 := File_hash(self.path)!=self.md5:
+				self.md5=md5
+				if docallback:
+					self.callback.handleEdit()
+
+class Callback_Forwarder:
+	def __init(self, forward):
+		self.forward=forward
+
+	def handleCreate(self):
+		self.forward.handleFileCreate(self.file)
+	def handleEdit(self):
+		self.forward.handleFileEdit(self.file)
+	def handleRemove(self):
+		self.forward.handleFileRemove(self.file)
+
+class Tracker_Folder(Tracker):
+	def __init__(self, path, callback):
+		super().__init__(callback)
+		self.trackers = []
+		self.path = path
+		self.forwarder = Callback_Forwarder(callback)
+
+	def check(self, docallback=True):
+		# check dir still exists
+		if not os.path.isdir(self.path):
+			if docallback:
+				self.callback.handleRemove()
+			return
+
+		tracked_names = [i.path.split("/")[-1] for i in self.trackers]
+		# get new files
+		for file in os.listdir(self.path):
+			if not file in tracked_names:
+				self.trackers.append(Tracker_File(os.path.join(self.path, file), self.forwarder))
+
+		for tracker in self.trackers:
+			forwarder.file=File(tracker.path)
+			tracker.check(docallback)
+
+		for i,file in reversed(enumerate(tracked_names)):
+			if not file in os.listdir(self.path):
+				del self.trackers[i]
+
+
+class Audio(File):
+	def __init__(self, file):
 		super().__init__(file)
-		self.index=index
 		self.load()
 
 	def load(self):
 		if self.valid:
 			self.length = self.getlength()
 		self.name=self.load_name()
-
-	def move(self, path):
-		self.path=path
-		self.load()
 
 	def load_name(self):
 		file = self.path.split("/")[-1]
@@ -69,10 +196,18 @@ class Track(File):
 
 	def getlength(self):
 		return audioread.audio_open(self.path).duration
+
 	def __eq__(self, Other):
 		if type(Other)==type(self):
 			return self.md5==Other.md5
 		return False
+
+class Track(Audio):
+	def __init__(self, file, index):
+		self.index=index
+		super().__init__(file)
+
+
 #updates
 class RenameTrack:
 	def __init__(self, md5, new_path):
@@ -299,6 +434,7 @@ def setName(conf, name):
 	conf["mp3_path"] = name
 	conf["wav_path"] = name + " HQ"
 	conf["video_path"] = name + ".mp4"
+	conf["full_path"] = name + ".mp3"
 
 def conf_detect(conf):
 	dir_add(conf, "./", False)
@@ -306,38 +442,6 @@ def conf_detect(conf):
 	setName(conf, getName())
 	conf["tags"]["Cover"]  = getCover()
 	conf["Video"] = getVideo()
-
-def Rename(old_name, new_name):
-	changed=False
-	while not changed:
-		try:
-			os.rename(old_name, new_name)
-			changed=True
-		except PermissionError:
-			print(old_name+" in use please resolve")
-			time.Sleep(1)
-			continue
-		except Exception as e:
-			print("Could not rename : "+str(e))
-			return True
-	return False
-
-def Delete(file):
-	changed=False
-	while not changed:
-		try:
-			os.remove(file)
-			changed=True
-		except PermissionError:
-			print(old_name+" in use please resolve")
-			time.Sleep(1)
-			continue
-		except FileNotFoundError:
-			break
-		except Exception as e:
-			print("Could not remove : "+str(e))
-			return True
-	return False
 
 def dir_Delete(file):
 	changed=False
@@ -380,7 +484,8 @@ class module:
 		pass
 	def verify(self, new_state):
 		pass
-
+	def handle(self, task, update):
+		pass
 
 class mp3(module):
 	def __init__(self):
@@ -421,9 +526,7 @@ class mp3(module):
 				if not self.getName(track.index, track.name) in os.listdir(self.path):
 					self.Tracks.remove(track)
 
-	def handle(self, update):
-		self.load()
-		task = type(update).__name__
+	def handle(self, task, update):
 		if task == "RenameTrack":
 			track = getTrackByMD5(self.Tracks, update.md5)
 			if track == None:
@@ -558,9 +661,7 @@ class wav(module):
 					self.Tracks.remove(track)
 
 
-	def handle(self, update):
-		self.load()
-		task = type(update).__name__
+	def handle(self, task, update):
 		if task == "RenameTrack":
 			track = getTrackByMD5(self.Tracks, update.md5)
 			if track == None:
@@ -640,27 +741,11 @@ class wav(module):
 		self.Tracks.clear()
 		dir_Delete(self.path)
 
-class video(module):
-	def __init__(self):
-		super().__init__()
-		self.jobs = [self.Render_video, self.Render_audio, self.Render]
+class modlue_hash(module):
 
-	def load(self,):
-		super().load()
-		self.path = self.state[self.name+"_path"]
-		self.Video = self.state["Video"]
-
-
-	def start(self):
-		self.job = 0
-
-	def end(self):
-		if self.job:
-			res = self.jobs[self.job-1]()
-			self.state["output"]=File(self.path)
-			print("New Hash: " + self.state["output"].md5)
-			return res
-		return False
+	def save(self):
+		self.state["output"]=File(self.path)
+		print("New Hash: " + self.state["output"].md5)
 
 	def search_sub(self, new_state):
 		check = self.state["output"]
@@ -698,9 +783,30 @@ class video(module):
 			self.search_sub(new_state)
 		return
 
-	def handle(self, update):
-		self.load()
-		task = type(update).__name__
+class video(modlue_hash):
+	def __init__(self):
+		super().__init__()
+		self.jobs = [self.Render_video, self.Render_audio, self.Render]
+
+	def load(self,):
+		super().load()
+		self.path = self.state[self.name+"_path"]
+		self.Video = self.state["Video"]
+
+
+	def start(self):
+		self.job = 0
+
+	def end(self):
+		if self.job:
+			res = self.jobs[self.job-1]()
+			self.save()
+
+			return res
+		return False
+
+
+	def handle(self, task, update):
 
 		if task == "ChangePath":
 			if update.module==self.name:
@@ -777,8 +883,82 @@ class video(module):
 		Delete(self.path)
 		Delete("tmp_"+self.path)
 
+class description(module):
+	def __init__(self):
+		super().__init__()
 
-modules = [ mp3(), wav(), video() ]
+	def load(self,):
+		super().load()
+		self.path = self.state[self.name+"_path"]
+		self.Artist = self.state["tags"]["Artist"]
+		self.Album = self.state["Album"]
+
+	def start(self):
+		self.rerender=False
+
+	def end(self):
+		if self.rerender:
+			print("Rerendering!")
+			self.output()
+
+	def verify(self, new_state):
+		pass
+
+	def handle(self, task, update):
+		if task == "ChangePath":
+			if update.module==self.name:
+				Rename(self.path, update.path)
+		elif task == "NewTrack" or task == "UpdateTrack" or task == "DeleteTrack" or task == "Reorder":
+			self.rerender=True
+
+
+	def output(self):
+		print(self.path)
+		i=0
+		timestamps = [datetime.fromtimestamp(i:=i+track.length).strftime("%M:%S")+" "+track.name for track in self.Tracks]
+		string = "\n".join(timestamps)
+		file = open(self.path, "w")
+		file.write(self.Artist+"s new Album " + self.Album + " is now on Youtube!!\nEnjoy our latest Tracks UwU\n\nTimestamps:\n")
+		file.write(string)
+		file.close()
+
+	def clear(self):
+		self.Tracks.clear()
+		Delete(self.path)
+
+class full(modlue_hash):
+	def __init__(self):
+		super().__init__()
+
+	def load(self,):
+		super().load()
+		self.path = self.state[self.name+"_path"]
+		self.Video = self.state["Video"]
+
+
+	def start(self):
+		pass
+
+	def end(self):
+		if self.job:
+			self.save()
+			return res
+		return False
+
+	def handle(self, task, update):
+		if task == "ChangePath":
+			if update.module==self.name:
+				Rename(self.path, update.path)
+		elif task == "NewTrack" or task == "UpdateTrack" or task == "DeleteTrack" or task == "Reorder":
+			self.rerender=True
+
+		return False
+
+	def render(self):
+		audio = f"|{self.Album}/".join([i.path for i in self.Tracks])
+		os.system("ffmpeg -i \"concat:{}/{}\" -c copy \"{}\" -y".format(self.Album, audio, self.path))
+
+modules = [ mp3(), wav(), video(), description() ]
 
 def conf_default():
 	conf = {}
@@ -796,9 +976,10 @@ def conf_default():
 	conf["Video"] = None
 
 	# module conf
-	conf["description_path"] = "Description.txt"
 	for module in modules:
 		conf[module.name+"_path"] = ""
+
+	conf["description_path"] = "Description.txt"
 
 	return conf
 
@@ -850,17 +1031,21 @@ def getDiff(old_state, new_state):
 
 def module_run(current_state, new_state, module):
 	module.verify(new_state) # veriy Environment befor execution
+	module.start() # signal start of transactions
 	# if no path set initilize
 	if not len(module.path):
+		module.load()
 		init = Initilize(new_state[module.name+"_path"], module.name)
-		module.handle(init)
+		task = type(init).__name__
+		module.handle(task, init)
 		init.apply(current_state)
-	module.start() # signal start of transactions
 	diffs = getDiff(current_state, new_state)
 	# pass each change to module handler
 	for diff in diffs:
-		print("Handeling "+ type(diff).__name__ + " by " + module.name)
-		if module.handle(diff):
+		task = type(diff).__name__
+		print(module.name + " -> " + task)
+		module.load()
+		if module.handle(task, diff):
 			break
 		diff.apply(current_state) # apply difference
 	module.end()
@@ -901,18 +1086,18 @@ else:
 	pub_save()
 	print("--------------")
 
-def length(Tracks):
+def Tracks_length(Tracks):
 	return datetime.fromtimestamp(sum([i.length for i in Tracks])).strftime("%M:%S")
 
 print("Album name: " + new_state["Album"])
 print("Found {} Songs".format(len(new_state["Tracks"])))
 print("Cover: " + new_state["tags"]["Cover"].path)
 print("Video: " + new_state["Video"].path)
-print("Album length: " + length(new_state["Tracks"]))
+print("Album length: " + Tracks_length(new_state["Tracks"]))
 #print("Tags: " + str(new_state["tags"]))
 
 var_cmds = { "cover" : new_state["tags"]["Cover"],
-		    "video" : new_state["Video"]
+			"video" : new_state["Video"]
 		   }
 quits = ["q", "quit", "exit"]
 run = True
@@ -941,7 +1126,7 @@ while run:
 			for directory in new_state["dirs"]:
 				print(directory)
 		elif cmd == "length":
-			print(length(new_state["Tracks"]))
+			print(Tracks_length(new_state["Tracks"]))
 		elif cmd == "rm_all":
 			for track in reversed(new_state["Tracks"]):
 				track_rm(new_state["Tracks"], track)
