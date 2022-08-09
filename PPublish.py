@@ -16,7 +16,7 @@ save = {}
 
 
 def getNameStart(string):
-	match = re.search('[a-zA-Z0-9][^). ]+', string)
+	match = re.search('[a-zA-Z0-9]{2}[^). ]+', string)
 	if match==None:
 		return 0
 	return match.start()
@@ -255,13 +255,20 @@ def track_rmn(state, name):
 	track_rm(state, track)
 
 def track_rmi(state, index):
-	num = int(index)
+	try:
+		num = int(index)
+	except:
+		print(index + " is not a valid index")
+		return
 	tracks = [i for i in state["Tracks"] if i.index==num]
 	for track in tracks:
 		track_rm(state, track)
 
 def Tracks_sort(Tracks):
 	Tracks.sort(key=lambda x: x.index)
+
+def Tracks_length(Tracks):
+	return datetime.fromtimestamp(sum([i.length for i in Tracks])).strftime("%M:%S")
 
 def dir_prep(directory):
 	directory=directory.strip()
@@ -282,7 +289,7 @@ def dir_add(state, save, directory):
 	# Get all songs in directory
 	for f in os.listdir(directory):
 		path = directory+f
-		if os.path.isfile(path) and f.split(".")[-1] in audio_fmt and not path in state["removed"]:
+		if os.path.isfile(path) and f.split(".")[-1] in audio_fmt and (not path in state["removed"] or not save):
 			track_add(state, path)
 
 def dir_rm(state, directory):
@@ -338,10 +345,10 @@ def setName(conf, name):
 			if i in default_paths:
 				suffix=default_paths[i]
 			else:
-				suffix=" "+i[:i.index("_path")-1]
+				suffix=" "+i.split("_")[0]
 			conf[i] = name + suffix
 
-		elif conf[i].startswith(conf["Album"]):
+		elif conf[i].startswith(conf["Album"]) and len(conf["Album"]):
 			conf[i] = conf[i].replace(conf["Album"], name)
 
 	conf["Album"] = name
@@ -352,6 +359,13 @@ def conf_detect(conf):
 	setName(conf, getName())
 	conf["tags"]["Cover"]  = getCover()
 	conf["Video"] = getVideo()
+	print("Album name: " + new_state["Album"])
+	print("Found {} Songs".format(len(conf["Tracks"])))
+	if conf["tags"]["Cover"]:
+		print("Cover: " + conf["tags"]["Cover"].path)
+	if conf["Video"]:
+		print("Video: " + conf["Video"].path)
+	print("Album length: " + Tracks_length(conf["Tracks"]))
 
 def Rename(old_name, new_name):
 	changed=False
@@ -394,8 +408,8 @@ def Junkify(path):
 
 	i=0
 	while name+"_"+str(i) in os.listdir("junk"):
-		i++
-	Rename(file, "junk/"+name+"_"+i+suffix)
+		i+=1
+	Rename(file, "junk/"+name+"_"+str(i)+suffix)
 
 
 def dir_Delete(file):
@@ -417,8 +431,7 @@ def dir_Delete(file):
 
 def Reset(module):
 	module.clear()
-	module.path=""
-	#module.state_set(current_states[module.name])
+	conf_default(module.state)
 
 
 class module:
@@ -546,7 +559,8 @@ class mp3(module):
 			try:
 				os.mkdir(update.path)
 			except:
-				pass
+				for i in os.listdir(update.path):
+					Junkify(os.path.join(update.path,i))
 
 		elif task == "Clear":
 			clear()
@@ -558,6 +572,22 @@ class mp3(module):
 	def getName(self, index, name):
 		return str(index)+". "+name+".mp3"
 
+	def getCmdEnd(self, track):
+		return "-id3v2_version 3 -metadata title=\"{}\" -metadata track=\"{}\" -metadata album_artist=\"{}\" -metadata album=\"{}\" -metadata genre=\"{}\" -metadata artist=\"{}\" \"{}\" -y".format(
+				track.name,
+				track.index,
+				self.tags["Artist"],
+				self.Album,
+				self.tags["Genre"],
+				", ".join(self.tags["feat"]),
+				os.path.join(self.path,
+				self.getName(track.index, track.name)))
+
+	def getCoverCmd(self):
+		if self.Cover:
+			return "-i \"{}\" -map 1:0".format(self.Cover.path)
+		return ""
+
 	def ReTag(self, track):
 		name=self.getName(track.index,track.name)
 		if not name in os.listdir(self.path):
@@ -566,33 +596,16 @@ class mp3(module):
 		if Rename(os.path.join(self.path, name), os.path.join(self.path, "tmp_"+name)):
 			return True
 
-		os.system("ffmpeg -i \"{}\" -i \"{}\" -map 0:0 -map 1:0 -c:a copy -id3v2_version 3 -metadata title=\"{}\" -metadata track=\"{}\" -metadata album_artist=\"{}\" -metadata album=\"{}\" -metadata genre=\"{}\" -metadata artist=\"{}\" \"{}\" -y".format(
+		os.system("ffmpeg -i \"{}\" {} -map 0:0 -c:a copy ".format(
 				os.path.join(self.path,"tmp_"+name),
-				self.Cover.path,
-				track.name,
-				track.index,
-				self.tags["Artist"],
-				self.Album,
-				self.tags["Genre"],
-				", ".join(self.tags["feat"]),
-				os.path.join(self.path,
-				self.getName(track.index, track.name)))
-			)
+				self.getCoverCmd()) + self.getCmdEnd(track))
 		Delete(os.path.join(self.path, "tmp_"+name))
 
 	def Render(self, track):
-		os.system("ffmpeg -i \"{}\" -i \"{}\" -map 0:0 -map 1:0 -b:a 320k -acodec libmp3lame -id3v2_version 3 -metadata title=\"{}\" -metadata track=\"{}\" -metadata album_artist=\"{}\" -metadata album=\"{}\" -metadata genre=\"{}\" -metadata artist=\"{}\" \"{}\" -y".format(
+		os.system("ffmpeg -i \"{}\" {} -map 0:0 -b:a 320k -acodec libmp3lame ".format(
 				track.path,
-				self.Cover.path,
-				track.name,
-				track.index,
-				self.tags["Artist"],
-				self.Album,
-				self.tags["Genre"],
-				", ".join(self.tags["feat"]),
-				os.path.join(self.path,
-				self.getName(track.index, track.name)))
-			)
+				self.getCoverCmd()
+			) + self.getCmdEnd(track))
 
 	def delete(self, Track):
 		Delete(os.path.join(self.path,self.getName(Track.index,Track.name)))
@@ -679,7 +692,8 @@ class wav(module):
 			try:
 				os.mkdir(update.path)
 			except:
-				pass
+				for i in os.listdir(update.path):
+					Junkify(os.path.join(update.path,i))
 
 		elif task == "Clear":
 			clear()
@@ -762,6 +776,8 @@ class video(modlue_hash):
 		self.job = 0
 
 	def end(self):
+		if not self.Video:
+			return "Video module needs video or cover"
 		if self.job:
 			res = self.jobs[self.job-1]()
 			self.save()
@@ -937,8 +953,8 @@ class full(modlue_hash):
 
 modules = [ mp3(), wav(), video(), description() ]
 
-def conf_default():
-	conf = {}
+def conf_default(conf):
+	conf.clear()
 
 	conf["Tracks"] = []
 	conf["Album"] = ""
@@ -1008,6 +1024,7 @@ def getDiff(old_state, new_state):
 	return diff
 
 def module_run(current_state, new_state, module):
+	module.verify(new_state) # veriy Environment before execution
 	# if no path set initilize
 	if not len(module.path):
 		module.load()
@@ -1015,7 +1032,6 @@ def module_run(current_state, new_state, module):
 		task = type(init).__name__
 		module.handle(task, init)
 		init.apply(current_state)
-	module.verify(new_state) # veriy Environment before execution
 	module.start() # signal start of transactions
 	diffs = getDiff(current_state, new_state)
 	# pass each change to module handler
@@ -1026,7 +1042,7 @@ def module_run(current_state, new_state, module):
 		if module.handle(task, diff):
 			break
 		diff.apply(current_state) # apply difference
-	module.end()
+	return module.end()
 
 
 savefile = ".ppub"
@@ -1044,19 +1060,19 @@ if savefile in os.listdir():
 
 	for module in modules:
 		if not module.name in current_states:
-			current_states[module.name] = conf_default()
+			current_states[module.name] = conf_default({})
 			new_state[module.name+"_path"]=""
 		module.state_set(current_states[module.name])
 
 	for directory in new_state["dirs"]:
-		dir_add(new_state, False, directory)
+		dir_add(new_state, True, directory)
 else:
 	print("---Analyzing Environment---")
-	new_state = conf_default()
+	new_state = conf_default({})
 
 	conf_detect(new_state)
 	for module in modules:
-		current_states[module.name] = conf_default()
+		current_states[module.name] = conf_default({})
 
 	for module in modules:
 		module.state_set(current_states[module.name])
@@ -1064,22 +1080,14 @@ else:
 	pub_save()
 	print("--------------")
 
-def Tracks_length(Tracks):
-	return datetime.fromtimestamp(sum([i.length for i in Tracks])).strftime("%M:%S")
-
-print("Album name: " + new_state["Album"])
-print("Found {} Songs".format(len(new_state["Tracks"])))
-print("Cover: " + new_state["tags"]["Cover"].path)
-print("Video: " + new_state["Video"].path)
-print("Album length: " + Tracks_length(new_state["Tracks"]))
 #print("Tags: " + str(new_state["tags"]))
 
 # set simple fiels
 var_set = { "Cover"   : [new_state["tags"]],
-		     "Video"  : [new_state],
-		     "Artist" : [new_state["tags"]],
-		     "Genre"  : [new_state["tags"]],
-		     "Album"  :	[new_state,  setName]
+			 "Video"  : [new_state],
+			 "Artist" : [new_state["tags"]],
+			 "Genre"  : [new_state["tags"]],
+			 "Album"  :	[new_state,  setName]
 		   }
 #append paths to var_set
 for module in modules:
@@ -1121,7 +1129,7 @@ class cmd_detect(cmd_unary):
 	def _run(self):
 		conf_detect(new_state)
 		for directory in new_state["dirs"]:
-			dir_add(new_state, False, directory)
+			dir_add(new_state, True, directory)
 
 	def description(self):
 		return "Detects Environment eg.\ncheck monitored directories for Tracks,\nGuess Album from Folder name\nSearch Cover and Video files"
@@ -1132,7 +1140,7 @@ class cmd_detect(cmd_unary):
 class cmd_check(cmd_unary):
 	def _run(self):
 		for directory in new_state["dirs"]:
-			dir_add(new_state, False, directory)
+			dir_add(new_state, True, directory)
 
 	def description(self):
 		return "Checks all monitored directories for new Tracks"
@@ -1264,7 +1272,13 @@ class cmd_reorder(cmd_unary):
 			process = subprocess.Popen(["start", "/WAIT", "order.txt"], shell=True)
 			process.wait()
 		else:
-			subprocess.call(('xdg-open', "order.txt"))
+			cmd = [os.getenv('EDITOR')]
+			if not cmd[0]:
+				cmd = ["vi","-c" ,"set number"]
+			cmd.append("order.txt")
+			process = subprocess.Popen(
+				cmd)
+			process.wait()
 		end = datetime.now()
 
 		if (end-start).total_seconds()<1:
@@ -1274,12 +1288,13 @@ class cmd_reorder(cmd_unary):
 		print("Reading File!")
 		lines = open("order.txt", "r").read().split("\n")
 		for index, name in enumerate(lines):
-			print(str(index+1)+". "+ name)
-			track = getTrackByName(new_state["Tracks"], name)
-			if track == None:
-				return "Track could not be found \""+name+"\", don't change the names"
-			else:
-				track.index=index+1
+			if len(name):
+				print(str(index+1)+". "+ name)
+				track = getTrackByName(new_state["Tracks"], name)
+				if track == None:
+					return "Track could not be found \""+name+"\", don't change the names"
+				else:
+					track.index=index+1
 		file.close()
 		os.remove("order.txt")
 		Tracks_sort(new_state["Tracks"])
@@ -1310,7 +1325,9 @@ class cmd_forward_arg(cmd):
 		self.arg=arg
 
 	def run(self, args):
-		arg = " ".join(inp[1:])
+		if not len(args):
+			return self.name + " requires one argument"
+		arg = " ".join(args)
 		return self.func(*self.args, arg)
 
 	def description(self):
@@ -1331,7 +1348,7 @@ class cmd_reset(cmd):
 				args.remove(module.name)
 
 		if "main" in args:
-			new_state=conf_default()
+			new_state=conf_default({})
 			args.remove("main")
 		if len(args):
 			return "Unknown module \""+"\"\nUnknown module \"".join(args)+"\""
@@ -1370,16 +1387,15 @@ class cmd_addi(cmd):
 		return "addi [path] [index...]"
 
 commands = [cmd_fam_ls("ls", new_state["Tracks"], "all loaded Tracks"), cmd_ls(), cmd_fam_ls("ls_mod", modules, "all available modules"),
-			cmd_fam_ls("ls_rm", new_state["removed"], "backlisted tracks\nuse add to remove track from blacklist"), cmd_fam_ls("ls_mon", new_state["dirs"], "currently monitored directories"),
-			cmd_forward_arg("add", "loads new Track from path", "path", track_add, [new_state]),
+			cmd_fam_ls("ls_rm", new_state["removed"], "backlisted tracks\nload track manually to remove track from blacklist"), cmd_fam_ls("ls_mon", new_state["dirs"], "currently monitored directories"),
+			cmd_forward_arg("add", "loads new Track from path", "path", track_add, [new_state]), cmd_addi(),
 			cmd_forward_arg("add_dir", "adds directory to monitoring list eg. loads all current and future Tracks from this directory", "path", dir_add, [new_state, True]),
 			cmd_forward_arg("add_all", "loads all Tracks from directory, but doesn't start monitoring", "path", dir_add, [new_state, False]), cmd_forward_arg("rm", "unloads Track with name", "name", track_rmn, [new_state]),
-			cmd_forward_arg("rm_dir", "unloads all tracks from this directory, stops monitoring", "path", dir_rm, [new_state]),
-			cmd_forward_arg("rmi", "unloads Track with index", "index", track_rmi, [new_state]), cmd_reset(), cmd_addi(),
+			cmd_rm_all(), cmd_forward_arg("rmi", "unloads Track with index", "index", track_rmi, [new_state]), cmd_forward_arg("rm_dir", "unloads all tracks from this directory, stops monitoring", "path", dir_rm, [new_state]),
+			cmd_reset(),
 			cmd_get_vars(var_set), cmd_set_vars(var_set),
-			cmd_rm_all(), cmd_length(), cmd_reorder(), cmd_all(), 
+			cmd_length(), cmd_reorder(), cmd_all(),
 			cmd_save(), cmd_detect(), cmd_check()
-			
 			]
 
 try:
@@ -1392,8 +1408,10 @@ quits = ["q", "quit", "exit"]
 
 run = True
 while run:
-	inp = input("PPublish: ~$ ").split( " " )
+	inp = input("PPublish: ~$ ").strip().split( " " )
 	cmd = inp[0].lower()
+	if not len(cmd):
+		continue
 	Found = True
 	if cmd in quits:
 		run = False
@@ -1442,7 +1460,8 @@ while run:
 		if not Found:
 			for module in modules:
 				if cmd == module.name:
-					module_run(current_states[module.name], new_state, module)
+					if error := module_run(current_states[module.name], new_state, module):
+						print("[ERROR] Module falied to run: " +str(error))
 					Found=True
 					break
 
