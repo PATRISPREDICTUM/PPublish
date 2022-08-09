@@ -385,6 +385,19 @@ def Delete(file):
 			return True
 	return False
 
+def Junkify(path):
+	file = path.replace("\\","/").split("/")[-1]
+	name = file.split(".")[0]
+	suffix = ""
+	if file.count("."):
+		suffix = "."+file.split(".")[1]
+
+	i=0
+	while name+"_"+str(i) in os.listdir("junk"):
+		i++
+	Rename(file, "junk/"+name+"_"+i+suffix)
+
+
 def dir_Delete(file):
 	changed=False
 	while not changed:
@@ -1368,6 +1381,12 @@ commands = [cmd_fam_ls("ls", new_state["Tracks"], "all loaded Tracks"), cmd_ls()
 			cmd_save(), cmd_detect(), cmd_check()
 			
 			]
+
+try:
+	os.mkdir("junk")
+except:
+	pass
+
 
 quits = ["q", "quit", "exit"]
 
