@@ -403,9 +403,8 @@ def dir_Delete(file):
 	return False
 
 def Reset(module):
-	global current_states
 	module.clear()
-	#current_states[module.name]=conf_default()
+	module.path=""
 	#module.state_set(current_states[module.name])
 
 
@@ -1357,13 +1356,17 @@ class cmd_addi(cmd):
 	def usage(self):
 		return "addi [path] [index...]"
 
-commands = [cmd_save(), cmd_detect(), cmd_check(), cmd_get_vars(var_set), cmd_set_vars(var_set), cmd_ls(), cmd_fam_ls("ls_rm", new_state["removed"], "backlisted tracks\nuse add to remove track from blacklist"),
-			cmd_fam_ls("ls", new_state["Tracks"], "all loaded Tracks"), cmd_fam_ls("ls_mon", new_state["dirs"], "currently monitored directories"), cmd_fam_ls("ls_mod", modules, "all available modules"),
-			cmd_length(), cmd_rm_all(), cmd_reorder(), cmd_all(), cmd_forward_arg("add", "loads new Track from path", "path", track_add, [new_state]),
+commands = [cmd_fam_ls("ls", new_state["Tracks"], "all loaded Tracks"), cmd_ls(), cmd_fam_ls("ls_mod", modules, "all available modules"),
+			cmd_fam_ls("ls_rm", new_state["removed"], "backlisted tracks\nuse add to remove track from blacklist"), cmd_fam_ls("ls_mon", new_state["dirs"], "currently monitored directories"),
+			cmd_forward_arg("add", "loads new Track from path", "path", track_add, [new_state]),
 			cmd_forward_arg("add_dir", "adds directory to monitoring list eg. loads all current and future Tracks from this directory", "path", dir_add, [new_state, True]),
-			cmd_forward_arg("add_all", "loads all Tracks from directory, but doesn't start monitoring", "path", dir_add, [new_state, False]),
-			cmd_forward_arg("rm_dir", "unloads all tracks from this directory, stops monitoring", "path", dir_rm, [new_state]), cmd_forward_arg("rm", "unloads Track with name", "name", track_rmn, [new_state]),
-			cmd_forward_arg("rmi", "unloads Track with index", "index", track_rmi, [new_state]), cmd_reset(), cmd_addi()
+			cmd_forward_arg("add_all", "loads all Tracks from directory, but doesn't start monitoring", "path", dir_add, [new_state, False]), cmd_forward_arg("rm", "unloads Track with name", "name", track_rmn, [new_state]),
+			cmd_forward_arg("rm_dir", "unloads all tracks from this directory, stops monitoring", "path", dir_rm, [new_state]),
+			cmd_forward_arg("rmi", "unloads Track with index", "index", track_rmi, [new_state]), cmd_reset(), cmd_addi(),
+			cmd_get_vars(var_set), cmd_set_vars(var_set),
+			cmd_rm_all(), cmd_length(), cmd_reorder(), cmd_all(), 
+			cmd_save(), cmd_detect(), cmd_check()
+			
 			]
 
 quits = ["q", "quit", "exit"]
