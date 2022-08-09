@@ -2,6 +2,7 @@
 import os
 import subprocess
 import time
+import datetime
 import copy
 from datetime import datetime
 import hashlib
@@ -14,86 +15,26 @@ new_state = {}
 save = {}
 
 
-def getFirst_Letter(string):
-	match = re.search('[a-zA-Z0-9][^)]+', string)
+def getNameStart(string):
+	match = re.search('[a-zA-Z0-9][^). ]+', string)
 	if match==None:
-		return None
+		return 0
 	return match.start()
-
-
-def Rename(old_name, new_name):
-	changed=False
-	while not changed:
-		try:
-			os.rename(old_name, new_name)
-			changed=True
-		except PermissionError:
-			print(old_name+" in use please resolve")
-			time.Sleep(1)
-			continue
-		except Exception as e:
-			print("Could not rename : "+str(e))
-			return True
-	return False
-
-def Delete(file):
-	changed=False
-	while not changed:
-		try:
-			os.remove(file)
-			changed=True
-		except PermissionError:
-			print(old_name+" in use please resolve")
-			time.Sleep(1)
-			continue
-		except FileNotFoundError:
-			break
-		except Exception as e:
-			print("Could not remove : "+str(e))
-			return True
-	return False
-
-def File_hash(file):
-	with open(file, "rb") as f:
-		file_hash = hashlib.md5()
-		while chunk := f.read(8192):
-			file_hash.update(chunk)
-
-		return file_hash.hexdigest()
-
-class Folder:
-	def __init__(self, path):
-		self.path=path
-		if not os.path.isdir(path):
-			os.mkdir(path)
-		self.files = []
-
-	def delete(self):
-		Delete(self.path)
-
-	def rename(self, new_name):
-		Rename(self.path, new_name)
-		self.path=new_name
 
 class File:
 	def __init__(self, path):
 		self.path=path
 		self.valid=os.path.isfile(path)
+		if self.valid:
+			self.md5=self.hash()
 
-	def load(self):
-		pass
+	def hash(self):
+		with open(self.path, "rb") as f:
+			file_hash = hashlib.md5()
+			while chunk := f.read(8192):
+				file_hash.update(chunk)
 
-	def path_change(self, new_path):
-		self.path=new_path
-		self.load()
-
-	def rename(self, new_path):
-		Rename(self.path, new_path)
-		self.path_change(new_path)
-
-	def delete(self):
-		Delete(self.path)
-
+			return file_hash.hexdigest()
 
 	def __eq__(self, Other):
 		if type(Other)==type(self):
@@ -101,81 +42,10 @@ class File:
 		return False
 
 
-class Tracker:
-	def __init__(self, callback):
-		self.callback=callback
-	def check(self, docallback=True):
-		pass
-
-class Tracker_File(Tracker):
-	def __init__(self, path, callback):
-		super().__init__(callback)
-		self.file=File
-		self.md5=None
-
-	def check(self, docallback=True):
-		# check if exists
-		if not os.path.isfile(self.file):
-			if docallback and self.md5 != None:
-				self.callback.handleRemove()
-			self.md5=None
-
-		else:
-			# is created
-			if self.md5==None:
-				self.md5=File_hash(self.path)
-				if docallback:
-					self.callback.handleCreate()
-
-			# is edited
-			elif md5 := File_hash(self.path)!=self.md5:
-				self.md5=md5
-				if docallback:
-					self.callback.handleEdit()
-
-class Callback_Forwarder:
-	def __init(self, forward):
-		self.forward=forward
-
-	def handleCreate(self):
-		self.forward.handleFileCreate(self.file)
-	def handleEdit(self):
-		self.forward.handleFileEdit(self.file)
-	def handleRemove(self):
-		self.forward.handleFileRemove(self.file)
-
-class Tracker_Folder(Tracker):
-	def __init__(self, path, callback):
-		super().__init__(callback)
-		self.trackers = []
-		self.path = path
-		self.forwarder = Callback_Forwarder(callback)
-
-	def check(self, docallback=True):
-		# check dir still exists
-		if not os.path.isdir(self.path):
-			if docallback:
-				self.callback.handleRemove()
-			return
-
-		tracked_names = [i.path.split("/")[-1] for i in self.trackers]
-		# get new files
-		for file in os.listdir(self.path):
-			if not file in tracked_names:
-				self.trackers.append(Tracker_File(os.path.join(self.path, file), self.forwarder))
-
-		for tracker in self.trackers:
-			forwarder.file=File(tracker.path)
-			tracker.check(docallback)
-
-		for i,file in reversed(enumerate(tracked_names)):
-			if not file in os.listdir(self.path):
-				del self.trackers[i]
-
-
-class Audio(File):
-	def __init__(self, file):
+class Track(File):
+	def __init__(self, file, index):
 		super().__init__(file)
+		self.index=index
 		self.load()
 
 	def load(self):
@@ -183,30 +53,30 @@ class Audio(File):
 			self.length = self.getlength()
 		self.name=self.load_name()
 
+	def move(self, path):
+		self.path=path
+		self.load()
+
 	def load_name(self):
 		file = self.path.split("/")[-1]
+
 		# get Name begining
-		start=getFirst_Letter(file)
+		start=getNameStart(file)
 		if start==None:
 			return "Unknown"
+		end=file.rfind(".")
 
 		# get name end
-		end=file.rfind(".")
 		return file[start:end]
 
 	def getlength(self):
 		return audioread.audio_open(self.path).duration
-
 	def __eq__(self, Other):
 		if type(Other)==type(self):
 			return self.md5==Other.md5
 		return False
-
-class Track(Audio):
-	def __init__(self, file, index):
-		self.index=index
-		super().__init__(file)
-
+	def __str__(self):
+		return self.name
 
 #updates
 class RenameTrack:
@@ -329,13 +199,34 @@ def getTrackByName(Tracks, name):
 		print(same)
 	return same[0]
 
-def track_add(Tracks, path):
-	track = Track(path, len(Tracks)+1)
+
+audio_fmt = ["mp3", "wav", "wma", "flac"]
+image_fmt = ["png", "bmp", "jpg", "tiff"]
+video_fmt = ["avi", "mp4", "flv", "mkv"]
+
+fmts = audio_fmt+image_fmt+video_fmt
+
+
+def track_add(state, path):
+
+	path.replace("\\", "/")
+	if not path.count("/"):
+		path = "./"+path
+
+	if not path.split(".")[-1] in audio_fmt:
+		print(path +" is not an audio file!")
+		return path + " is not a audio file!"
+
+	if path in state["removed"]:
+		state["removed"].remove(path)
+
+	track = Track(path, len(state["Tracks"])+1)
 	if not track.valid:
 		print("File does not exist")
-		return
-	dup = getTrackByMD5(Tracks, track.md5)
-	twin = getTrackByName(Tracks, track.name)
+		return "File is invalid"
+
+	dup = getTrackByMD5(state["Tracks"], track.md5)
+	twin = getTrackByName(state["Tracks"], track.name)
 	if dup:
 		if dup.path!=track.path:
 			print("sub" + dup.path + " ->" + track.path)
@@ -345,34 +236,32 @@ def track_add(Tracks, path):
 		twin.md5=track.md5
 	else:
 		print("Loading Track "+track.path)
-		Tracks.append(track)
+		state["Tracks"].append(track)
 
-def track_rm(Tracks, track):
+def track_rm(state, track):
 	index= track.index
 	print("Removed "+track.name)
-	Tracks.remove(track)
-	for track in Tracks:
+	state["removed"].append(track.path)
+	state["Tracks"].remove(track)
+	for track in state["Tracks"]:
 		if track.index>index:
 			track.index-=1
 
-def track_rmn(Tracks, name):
-	track = getTrackByName(Tracks, name)
+def track_rmn(state, name):
+	track = getTrackByName(state["Tracks"], name)
 	if track == None:
 		print("[ERROR] Could not find Track \""+name+"\"")
-		return
-	track_rm(Tracks, track)
+		return "Track not found"
+	track_rm(state, track)
 
-def track_rmi(Tracks, index):
+def track_rmi(state, index):
 	num = int(index)
-	tracks = [i for i in Tracks if i.index==num]
+	tracks = [i for i in state["Tracks"] if i.index==num]
 	for track in tracks:
-		track_rm(Tracks, track)
+		track_rm(state, track)
 
 def Tracks_sort(Tracks):
 	Tracks.sort(key=lambda x: x.index)
-
-
-audio_fmt = ["mp3", "wav"]
 
 def dir_prep(directory):
 	directory=directory.strip()
@@ -384,7 +273,7 @@ def dir_prep(directory):
 		directory+="/"
 	return directory
 
-def dir_add(state, directory, save=True):
+def dir_add(state, save, directory):
 
 	directory = dir_prep(directory)
 	if not directory in state["dirs"] and save:
@@ -392,8 +281,9 @@ def dir_add(state, directory, save=True):
 
 	# Get all songs in directory
 	for f in os.listdir(directory):
-		if os.path.isfile(directory+f) and f.split(".")[-1] in audio_fmt:
-			track_add(state["Tracks"], directory+f)
+		path = directory+f
+		if os.path.isfile(path) and f.split(".")[-1] in audio_fmt and not path in state["removed"]:
+			track_add(state, path)
 
 def dir_rm(state, directory):
 
@@ -404,22 +294,28 @@ def dir_rm(state, directory):
 	# Get all songs in directory
 	for track in reversed(state["Tracks"]):
 		if track.path.startswith(directory):
-			track_rm(state["Tracks"], track)
+			track_rm(state, track)
+
+
+
+def dir_relevant(path):
+	files = []
+	for file in os.listdir(path):
+		if file.split(".")[-1] in fmts:
+			files.append(file)
+	return files
 
 def getName():
 	folder = os.getcwd().replace("\\","/").split("/")[-1]
-	start = getFirst_Letter(folder)
+	start = getNameStart(folder)
 	return folder[start:]
 
-image_fmt = ["png", "bmp", "jpg", "tiff"]
-video_fmt = ["avi", "mp4", "flv", "mkv"]
 def getCover():
 	tmp = [f for f in os.listdir() if len(f.split("."))==2]
 	for file in tmp:
 		l = file.lower().split(".")
 		if l[0]=="cover" and l[1] in image_fmt:
 			return File(file)
-	return None
 
 def getVideo():
 	tmp = [f for f in os.listdir() if len(f.split("."))==2]
@@ -429,19 +325,65 @@ def getVideo():
 			return File(file)
 	return getCover()
 
+default_paths = { "mp3_path" : "",
+				  "wav_path" : " HQ",
+				  "video_path" : ".mp4",
+				  "full_path" : "mp3"
+				  }
+
 def setName(conf, name):
+	paths = [i for i in conf if i.endswith("_path")]
+	for i in paths:
+		if not len(conf[i]):
+			if i in default_paths:
+				suffix=default_paths[i]
+			else:
+				suffix=" "+i[:i.index("_path")-1]
+			conf[i] = name + suffix
+
+		elif conf[i].startswith(conf["Album"]):
+			conf[i] = conf[i].replace(conf["Album"], name)
+
 	conf["Album"] = name
-	conf["mp3_path"] = name
-	conf["wav_path"] = name + " HQ"
-	conf["video_path"] = name + ".mp4"
-	conf["full_path"] = name + ".mp3"
 
 def conf_detect(conf):
-	dir_add(conf, "./", False)
+	dir_add(conf, True, "./")
 	#album name
 	setName(conf, getName())
 	conf["tags"]["Cover"]  = getCover()
 	conf["Video"] = getVideo()
+
+def Rename(old_name, new_name):
+	changed=False
+	while not changed:
+		try:
+			os.rename(old_name, new_name)
+			changed=True
+		except PermissionError:
+			print(old_name+" in use please resolve")
+			time.Sleep(1)
+			continue
+		except Exception as e:
+			print("Could not rename : "+str(e))
+			return True
+	return False
+
+def Delete(file):
+	changed=False
+	while not changed:
+		try:
+			os.remove(file)
+			changed=True
+		except PermissionError:
+			print(old_name+" in use please resolve")
+			time.Sleep(1)
+			continue
+		except FileNotFoundError:
+			break
+		except Exception as e:
+			print("Could not remove : "+str(e))
+			return True
+	return False
 
 def dir_Delete(file):
 	changed=False
@@ -486,6 +428,11 @@ class module:
 		pass
 	def handle(self, task, update):
 		pass
+	def __str__(self):
+		return self.name
+
+	def description(self):
+		return ""
 
 class mp3(module):
 	def __init__(self):
@@ -525,6 +472,9 @@ class mp3(module):
 			for track in reversed(self.Tracks):
 				if not self.getName(track.index, track.name) in os.listdir(self.path):
 					self.Tracks.remove(track)
+
+	def description(self):
+		return "Creates tagged mp3 files of file with integraded Album Cover"
 
 	def handle(self, task, update):
 		if task == "RenameTrack":
@@ -640,6 +590,7 @@ class mp3(module):
 			self.delete(track)
 		self.Tracks.clear()
 		dir_Delete(self.path)
+		self.path=""
 
 
 class wav(module):
@@ -660,6 +611,8 @@ class wav(module):
 				if not self.getName(track.index, track.name) in os.listdir(self.path):
 					self.Tracks.remove(track)
 
+	def description(self):
+		return "Creates high quality Wav output of album"
 
 	def handle(self, task, update):
 		if task == "RenameTrack":
@@ -793,7 +746,6 @@ class video(modlue_hash):
 		self.path = self.state[self.name+"_path"]
 		self.Video = self.state["Video"]
 
-
 	def start(self):
 		self.job = 0
 
@@ -805,6 +757,8 @@ class video(modlue_hash):
 			return res
 		return False
 
+	def description(self):
+		return "Creates an Album video for Youtube, uses either the Cover as a still or a video if found"
 
 	def handle(self, task, update):
 
@@ -904,6 +858,9 @@ class description(module):
 	def verify(self, new_state):
 		pass
 
+	def description(self):
+		return "Creates a description for Youtube with timestamps for the Tracks"
+
 	def handle(self, task, update):
 		if task == "ChangePath":
 			if update.module==self.name:
@@ -945,6 +902,9 @@ class full(modlue_hash):
 			return res
 		return False
 
+	def description(self):
+		return "Combines all Tracks into one high quality wav file"
+
 	def handle(self, task, update):
 		if task == "ChangePath":
 			if update.module==self.name:
@@ -958,6 +918,11 @@ class full(modlue_hash):
 		audio = f"|{self.Album}/".join([i.path for i in self.Tracks])
 		os.system("ffmpeg -i \"concat:{}/{}\" -c copy \"{}\" -y".format(self.Album, audio, self.path))
 
+	def clear(self):
+		self.Tracks.clear()
+		Delete(self.path)
+		self.state[self.name+"_path"]=""
+
 modules = [ mp3(), wav(), video(), description() ]
 
 def conf_default():
@@ -966,6 +931,7 @@ def conf_default():
 	conf["Tracks"] = []
 	conf["Album"] = ""
 	conf["dirs"] = []
+	conf["removed"] = []
 
 	#mp3 tags
 	conf["tags"]={}
@@ -1030,8 +996,6 @@ def getDiff(old_state, new_state):
 	return diff
 
 def module_run(current_state, new_state, module):
-	module.verify(new_state) # veriy Environment befor execution
-	module.start() # signal start of transactions
 	# if no path set initilize
 	if not len(module.path):
 		module.load()
@@ -1039,6 +1003,8 @@ def module_run(current_state, new_state, module):
 		task = type(init).__name__
 		module.handle(task, init)
 		init.apply(current_state)
+	module.verify(new_state) # veriy Environment before execution
+	module.start() # signal start of transactions
 	diffs = getDiff(current_state, new_state)
 	# pass each change to module handler
 	for diff in diffs:
@@ -1071,7 +1037,7 @@ if savefile in os.listdir():
 		module.state_set(current_states[module.name])
 
 	for directory in new_state["dirs"]:
-		dir_add(new_state, directory)
+		dir_add(new_state, False, directory)
 else:
 	print("---Analyzing Environment---")
 	new_state = conf_default()
@@ -1096,115 +1062,370 @@ print("Video: " + new_state["Video"].path)
 print("Album length: " + Tracks_length(new_state["Tracks"]))
 #print("Tags: " + str(new_state["tags"]))
 
-var_cmds = { "cover" : new_state["tags"]["Cover"],
-			"video" : new_state["Video"]
+# set simple fiels
+var_set = { "Cover"   : [new_state["tags"]],
+		     "Video"  : [new_state],
+		     "Artist" : [new_state["tags"]],
+		     "Genre"  : [new_state["tags"]],
+		     "Album"  :	[new_state,  setName]
 		   }
+#append paths to var_set
+for module in modules:
+	var_set[module.name+"_path"]=[new_state]
+
+class cmd:
+	def run(self, args):
+		pass
+
+	def description(self):
+		return "Not Documented"
+
+	def usage(self):
+		return "No Usage"
+
+class cmd_unary(cmd):
+	def usage(self):
+		return self.id()
+	def _run(self):
+		pass
+
+	def run(self, args):
+		if not len(args):
+			return self._run()
+		else:
+			return self.id() + " takes no args"
+
+class cmd_save(cmd_unary):
+	def _run(self):
+		pub_save()
+		pass
+
+	def description(self):
+		return "Saves current states to .ppub"
+
+	def id(self):
+		return "save"
+class cmd_detect(cmd_unary):
+	def _run(self):
+		conf_detect(new_state)
+		for directory in new_state["dirs"]:
+			dir_add(new_state, False, directory)
+
+	def description(self):
+		return "Detects Environment eg.\ncheck monitored directories for Tracks,\nGuess Album from Folder name\nSearch Cover and Video files"
+
+	def id(self):
+		return "detect"
+
+class cmd_check(cmd_unary):
+	def _run(self):
+		for directory in new_state["dirs"]:
+			dir_add(new_state, False, directory)
+
+	def description(self):
+		return "Checks all monitored directories for new Tracks"
+
+	def id(self):
+		return "check"
+
+class cmd_set_vars(cmd):
+	def __init__(self, var_set):
+		self.var_set = var_set
+
+	def run(self, args):
+		if len(args)>1:
+			found = False
+			for var in self.var_set:
+				if var.lower()==args[0].lower():
+					found = True
+					arg = " ".join(args[1:])
+					if len(self.var_set[var])==2:
+						self.var_set[var][1](self.var_set[var][0], arg)
+					else:
+						self.var_set[var][0][var] = arg
+
+					print(var+" is now "+self.var_set[var][0][var])
+					break
+			if not found:
+				return "Unknown field \""+args[0]+"\""
+
+		else:
+			return "not enough args"
+
+	def description(self):
+		return "sets value of [field]\nfield is caseinsensitive\n\nAvailable fields:\n"+"\n".join(self.var_set)
+
+	def id(self):
+		return "set"
+
+	def usage(self):
+		return "set [field] [value]"
+
+class cmd_get_vars(cmd):
+	def __init__(self, var_set):
+		self.var_set = var_set
+
+	def run(self, args):
+		if len(args)==1:
+			found = False
+			for var in self.var_set:
+				if var.lower()==args[0].lower():
+					found = True
+					print(var+": "+self.var_set[var][0][var])
+					break
+			if not found:
+				return "Unknown field \""+args[0]+"\""
+		else:
+			return "Too many args"
+
+	def description(self):
+		return "prints current value of [field]\nfield is caseinsensitive\n\nAvailable fields:\n"+"\n".join(self.var_set)
+
+	def id(self):
+		return "get"
+
+	def usage(self):
+		return "get [field]"
+
+class cmd_ls(cmd):
+	def run(self, args):
+		arg = " ".join(args)
+		files = dir_relevant(arg)
+
+		for i, file in enumerate(files):
+			print(i+1, file)
+
+	def description(self):
+		return "Lists all relevant files in [dir]\nTracks could be imported using addi"
+
+	def usage(self):
+		return "ls [dir]"
+
+	def id(self):
+		return "ls_dir"
+
+class cmd_fam_ls(cmd_unary):
+	def __init__(self, name, List, desc = "all elements"):
+		self.List =List
+		self.name = name
+		self.desc = desc
+
+	def _run(self):
+		for i,e in enumerate(self.List):
+			print(f"{i+1:02}. "+ str(e))
+
+	def id(self):
+		return self.name
+
+	def description(self):
+		return "Lists " + self.desc
+
+class cmd_length(cmd_unary):
+	def _run(self):
+		print(Tracks_length(new_state["Tracks"]))
+
+	def id(self):
+		return "length"
+
+	def description(self):
+		return "Prints length of album eg. all currently loaded Tracks"
+
+class cmd_rm_all(cmd_unary):
+	def _run(self):
+		for track in reversed(new_state["Tracks"]):
+			track_rm(new_state, track)
+
+	def description(self):
+		return "Clears Tracklist"
+
+	def id(self):
+		return "rm_all"
+
+class cmd_reorder(cmd_unary):
+	def _run(self):
+		file = open("order.txt", "w")
+		file.write("\n".join([i.name for i in new_state["Tracks"]]))
+		file.close()
+		print("waiting for editor to close")
+		start = datetime.now()
+		if os.name=="nt":
+			process = subprocess.Popen(["start", "/WAIT", "order.txt"], shell=True)
+			process.wait()
+		else:
+			subprocess.call(('xdg-open', "order.txt"))
+		end = datetime.now()
+
+		if (end-start).total_seconds()<1:
+			print("Autodetection failed! Press Enter resume")
+			input()
+
+		print("Reading File!")
+		lines = open("order.txt", "r").read().split("\n")
+		for index, name in enumerate(lines):
+			print(str(index+1)+". "+ name)
+			track = getTrackByName(new_state["Tracks"], name)
+			if track == None:
+				return "Track could not be found \""+name+"\", don't change the names"
+			else:
+				track.index=index+1
+		file.close()
+		os.remove("order.txt")
+		Tracks_sort(new_state["Tracks"])
+
+	def description(self):
+		return "Promts reorder dialouge\nChange the order of the Tracks inside the editor, save, and quit"
+
+	def id(self):
+		return "reorder"
+
+class cmd_all(cmd_unary):
+	def _run(self):
+		for module in modules:
+			module_run(current_states[module.name], new_state, module)
+
+	def id(self):
+		return "all"
+
+	def description(self):
+		return "Run all available modules in sequence"
+
+class cmd_forward_arg(cmd):
+	def __init__(self, name, desc, arg, func, args):
+		self.func=func
+		self.args=args
+		self.name=name
+		self.desc=desc
+		self.arg=arg
+
+	def run(self, args):
+		arg = " ".join(inp[1:])
+		return self.func(*self.args, arg)
+
+	def description(self):
+		return self.desc
+
+	def id(self):
+		return self.name
+
+	def usage(self):
+		return self.name + " ["+self.arg+"]"
+
+class cmd_reset(cmd):
+	def run(self, args):
+		global new_state
+		for module in modules:
+			if module.name in args:
+				Reset(module)
+				args.remove(module.name)
+
+		if "main" in args:
+			new_state=conf_default()
+			args.remove("main")
+		if len(args):
+			return "Unknown module \""+"\"\nUnknown module \"".join(args)+"\""
+
+	def id(self):
+		return "reset"
+	def description(self):
+		return "resets the states of all listed modules\nModules:\n"+"\n".join([i.name for i in modules])+"\nmain"
+
+	def usage(self):
+		return "reset [module...]"
+
+class cmd_addi(cmd):
+	def run(self, args):
+		if len(args)<2:
+			return "Too few args"
+
+		errors = []
+		files=dir_relevant(args[0])
+		for i in args[1:]:
+			index=int(i)-1
+			if index<len(files):
+				track_add(new_state, os.path.join(args[0], files[index]))
+			else:
+				errors.append(i)
+		if len(errors):
+			return ", ".join(errors) + " index is out of range"
+
+	def id(self):
+		return "addi"
+
+	def description(self):
+		return "adds files from [dir] by indecies"
+
+	def usage(self):
+		return "addi [path] [index...]"
+
+commands = [cmd_save(), cmd_detect(), cmd_check(), cmd_get_vars(var_set), cmd_set_vars(var_set), cmd_ls(), cmd_fam_ls("ls_rm", new_state["removed"], "backlisted tracks\nuse add to remove track from blacklist"),
+			cmd_fam_ls("ls", new_state["Tracks"], "all loaded Tracks"), cmd_fam_ls("ls_mon", new_state["dirs"], "currently monitored directories"), cmd_fam_ls("ls_mod", modules, "all available modules"),
+			cmd_length(), cmd_rm_all(), cmd_reorder(), cmd_all(), cmd_forward_arg("add", "loads new Track from path", "path", track_add, [new_state]),
+			cmd_forward_arg("add_dir", "adds directory to monitoring list eg. loads all current and future Tracks from this directory", "path", dir_add, [new_state, True]),
+			cmd_forward_arg("add_all", "loads all Tracks from directory, but doesn't start monitoring", "path", dir_add, [new_state, False]),
+			cmd_forward_arg("rm_dir", "unloads all tracks from this directory, stops monitoring", "path", dir_rm, [new_state]), cmd_forward_arg("rm", "unloads Track with name", "name", track_rmn, [new_state]),
+			cmd_forward_arg("rmi", "unloads Track with index", "index", track_rmi, [new_state]), cmd_reset(), cmd_addi()
+			]
+
 quits = ["q", "quit", "exit"]
+
 run = True
 while run:
 	inp = input("PPublish: ~$ ").split( " " )
 	cmd = inp[0].lower()
 	Found = True
-	if len(inp)==1:
-		if cmd in quits:
-			run = False
-		elif cmd == "save":
-			pub_save()
-		elif cmd == "detect":
-			conf_detect(new_state)
-		elif cmd == "check":
-			for directory in new_state["dirs"]:
-				dir_add(new_state, directory)
-		elif cmd == "name":
-			print(new_state["Album"])
-		elif cmd == "ls":
-			print("Tracks:")
-			for track in new_state["Tracks"]:
-				print(str(track.index) + ". " + track.name)
+	if cmd in quits:
+		run = False
+	elif cmd == "help":
+		print("Help for PPublish by NoHamster")
+		print("Exit with " + ", ".join(quits))
+		print("Commands:")
+		print("Execute via shell")
+		print("---------")
+		for cmd in commands:
+			print(cmd.id()+":")
+			print("\t"+cmd.usage())
 			print()
-			print("Monitoring:")
-			for directory in new_state["dirs"]:
-				print(directory)
-		elif cmd == "length":
-			print(Tracks_length(new_state["Tracks"]))
-		elif cmd == "rm_all":
-			for track in reversed(new_state["Tracks"]):
-				track_rm(new_state["Tracks"], track)
-		elif cmd == "reorder":
-			file = open("order.txt", "w")
-			file.write("\n".join([i.name for i in new_state["Tracks"]]))
-			file.close()
-			print("waiting for editor to close")
-			if os.name=="nt":
-				process = subprocess.Popen(["start", "/WAIT", "order.txt"], shell=True)
-				process.wait()
-			else:
-				subprocess.call(('xdg-open', "order.txt"))
+			print("\t"+cmd.description().replace("\n", "\n\t"))
+		print("---------")
+		print()
 
-			print("Reading File!")
-			lines = open("order.txt", "r").read().split("\n")
-			for index, name in enumerate(lines):
-				print(str(index+1)+". "+ name)
-				track = getTrackByName(new_state["Tracks"], name)
-				if track == None:
-					print("[ERROR] Track could not be found \""+name+"\"")
-				else:
-					track.index=index+1
-			file.close()
-			os.remove("order.txt")
-			Tracks_sort(new_state["Tracks"])
 
-		elif cmd == "all":
-			for module in modules:
-				module_run(current_states[module.name], new_state, module)
-		else:
-			Found=False
+		print("Modules:")
+		print("can also be called through the shell")
+		print("---------")
+		for module in modules:
+			print(module.name + " - " + module.description())
+		print("---------")
+		print()
+
+		print("Setting fields:")
+		print("View or Change these with 'get' and 'set'")
+		print("---------")
+		for var in var_set:
+			print(var)
+		print("---------")
+		print()
+
+	else:
+		Found=False
+		for command in commands:
+			if cmd==command.id().lower():
+				error = command.run(inp[1:])
+				if error:
+					print("An error occured while executing command:")
+					print("[ERROR] " + command.id() + ": " + str(error))
+					print("use 'help' if your unsure of usage")
+				Found=True
+
+		if not Found:
 			for module in modules:
 				if cmd == module.name:
 					module_run(current_states[module.name], new_state, module)
 					Found=True
 					break
 
-			for key in var_cmds:
-				if cmd == key:
-					print(var_cmds[key])
-					Found=True
-					break
-	elif len(inp)>1:
-		arg = " ".join(inp[1:])
-		if cmd == "add":
-			track_add(new_state["Tracks"], arg)
-		elif cmd == "add_dir":
-			dir_add(new_state, arg)
-		elif cmd == "add_all":
-			dir_add(new_state, arg, False)
-		elif cmd == "rm_dir":
-			dir_rm(new_state, arg)
-		elif cmd == "rm":
-			track_rmn(new_state["Tracks"], arg)
-		elif cmd == "rmi":
-			track_rmi(new_state["Tracks"], arg)
-		elif cmd == "name":
-			setName(new_state, arg)
-		elif cmd == "reset":
-			args = arg.split(" ")
-			for module in modules:
-				if module.name in args:
-					Reset(module)
-					args.remove(module.name)
-
-			for i in args:
-				print("Unknown module \""+i+"\"")
-		else:
-			Found=False
-			for key in var_cmds:
-				if cmd == key:
-					var_cmds[key] = arg
-					Found=True
-					break
-
 	if not Found:
-			print("Unknown command!")
+			print("[ERROR] Unknown command \"" + cmd + "\"")
 
 	pub_save()
 pub_save()
