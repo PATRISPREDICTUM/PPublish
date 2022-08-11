@@ -4,7 +4,6 @@ import subprocess
 import time
 import datetime
 import copy
-from datetime import datetime
 import hashlib
 import pickle
 import re
@@ -14,6 +13,14 @@ current_states = {}
 new_state = {}
 save = {}
 
+def realpath(path):
+	prefix=""
+	if os.name=="nt":
+		prefix="\\\\?\\"
+	return prefix+os.path.realpath(path)
+
+def getFile(path):
+	return os.path.basename(path)
 
 def getNameStart(string):
 	match = re.search('[a-zA-Z0-9]{2}[^). ]+', string)
@@ -58,7 +65,7 @@ class Track(File):
 		self.load()
 
 	def load_name(self):
-		file = self.path.split("/")[-1]
+		file = getFile(self.path)
 
 		# get Name begining
 		start=getNameStart(file)
@@ -209,9 +216,8 @@ fmts = audio_fmt+image_fmt+video_fmt
 
 def track_add(state, path):
 
-	path.replace("\\", "/")
-	if not path.count("/"):
-		path = "./"+path
+	if not (path.count("/") + path.count("\\")):
+		path = os.path.join(os.curdir, path)
 
 	if not path.split(".")[-1] in audio_fmt:
 		print(path +" is not an audio file!")
@@ -268,16 +274,15 @@ def Tracks_sort(Tracks):
 	Tracks.sort(key=lambda x: x.index)
 
 def Tracks_length(Tracks):
-	return datetime.fromtimestamp(sum([i.length for i in Tracks])).strftime("%M:%S")
+	return str(datetime.timedelta(seconds =int(sum([i.length for i in Tracks]))))
 
 def dir_prep(directory):
 	directory=directory.strip()
 	if len(directory)==0:
 		directory="."
 
-	directory.replace("\\","/")
-	if directory[-1]!="/":
-		directory+="/"
+	if directory[-1]!=os.sep:
+		directory+=os.sep
 	return directory
 
 def dir_add(state, save, directory):
@@ -313,7 +318,7 @@ def dir_relevant(path):
 	return files
 
 def getName():
-	folder = os.getcwd().replace("\\","/").split("/")[-1]
+	folder = getFile(os.getcwd())
 	start = getNameStart(folder)
 	return folder[start:]
 
@@ -354,7 +359,7 @@ def setName(conf, name):
 	conf["Album"] = name
 
 def conf_detect(conf):
-	dir_add(conf, True, "./")
+	dir_add(conf, True, os.curdir)
 	#album name
 	setName(conf, getName())
 	conf["tags"]["Cover"]  = getCover()
@@ -400,7 +405,7 @@ def Delete(file):
 	return False
 
 def Junkify(path):
-	file = path.replace("\\","/").split("/")[-1]
+	file = getFile(path)
 	name = file.split(".")[0]
 	suffix = ""
 	if file.count("."):
@@ -580,12 +585,12 @@ class mp3(module):
 				self.Album,
 				self.tags["Genre"],
 				", ".join(self.tags["feat"]),
-				os.path.join(self.path,
-				self.getName(track.index, track.name)))
+				realpath(os.path.join(self.path,
+				self.getName(track.index, track.name))))
 
 	def getCoverCmd(self):
 		if self.Cover:
-			return "-i \"{}\" -map 1:0".format(self.Cover.path)
+			return "-i \"{}\" -map 1:0".format(realpath(self.Cover.path))
 		return ""
 
 	def ReTag(self, track):
@@ -597,13 +602,13 @@ class mp3(module):
 			return True
 
 		os.system("ffmpeg -i \"{}\" {} -map 0:0 -c:a copy ".format(
-				os.path.join(self.path,"tmp_"+name),
+				realpath(os.path.join(self.path,"tmp_"+name)),
 				self.getCoverCmd()) + self.getCmdEnd(track))
 		Delete(os.path.join(self.path, "tmp_"+name))
 
 	def Render(self, track):
 		os.system("ffmpeg -i \"{}\" {} -map 0:0 -b:a 320k -acodec libmp3lame ".format(
-				track.path,
+				realpath(track.path),
 				self.getCoverCmd()
 			) + self.getCmdEnd(track))
 
@@ -706,9 +711,9 @@ class wav(module):
 
 	def Render(self, track):
 		os.system("ffmpeg -i \"{}\" -ar 44100 -ac 2 \"{}\" -y".format(
-				track.path,
-				os.path.join(self.path,
-				self.getName(track.index, track.name)))
+				realpath(track.path),
+				realpath(os.path.join(self.path,
+				self.getName(track.index, track.name))))
 			)
 
 	def delete(self, Track):
@@ -723,8 +728,12 @@ class wav(module):
 class modlue_hash(module):
 
 	def save(self):
-		self.state["output"]=File(self.path)
-		print("New Hash: " + self.state["output"].md5)
+		self.state["output"]=File(realpath(self.path))
+		if not self.state["output"].valid:
+			print(self.name + " failed to execute")
+			Reset(self)
+		else:
+			print("New Hash: " + self.state["output"].md5)
 
 	def search_sub(self, new_state):
 		check = self.state["output"]
@@ -821,15 +830,15 @@ class video(modlue_hash):
 		if not len(self.Tracks):
 			return
 		self.Tracks.sort(key=lambda x: x.index)
-		audio = [ i.path for i in self.Tracks]
+		audio = [ realpath(i.path) for i in self.Tracks]
 		vid_fmt = self.Video.path.split(".")[-1]
 		render = "-stream_loop -1"
 		if vid_fmt in image_fmt:
 			render = "-loop 1"
 
-		video_render = "{} -i {} -map {}:v".format(render, self.Video.path, len(audio))
+		video_render = "{} -i \"{}\" -map {}:v".format(render, realpath(self.Video.path), len(audio))
 
-		os.system("ffmpeg -i \"{}\" {} -filter_complex \"[{}:0]concat=n={}:v=0:a=1[out]\" -map [out] -b:a 320k -tune stillimage -acodec libmp3lame -c:v libx264 -pix_fmt yuv420p -shortest \"{}\" -y".format( "\" -i \"".join(audio), video_render, ":0][".join([str(i) for i in range(len(audio))]), len(audio), self.path)
+		os.system("ffmpeg -i \"{}\" {} -filter_complex \"[{}:0]concat=n={}:v=0:a=1[out]\" -map [out] -b:a 320k -tune stillimage -acodec libmp3lame -c:v libx264 -pix_fmt yuv420p -shortest \"{}\" -y".format( "\" -i \"".join(audio), video_render, ":0][".join([str(i) for i in range(len(audio))]), len(audio), realpath(self.path))
 			)
 	def Render_audio(self):
 		if not len(self.Tracks):
@@ -839,7 +848,7 @@ class video(modlue_hash):
 		if Rename(self.path, "tmp_"+self.path):
 			return True
 		os.system("ffmpeg -i \"{}\" -i \"{}\" -filter_complex \"[{}:0]concat=n={}:v=0:a=1[out]\" -map [out] -map {}:v -c:v copy -b:a 320k -acodec libmp3lame -pix_fmt yuv420p -shortest \"{}\" -y".format(
-			"\" -i \"".join(audio), "tmp_"+self.path, ":0][".join([str(i) for i in range(len(audio))]), len(audio),len(audio), self.path)
+			"\" -i \"".join(audio), realpath("tmp_"+self.path), ":0][".join([str(i) for i in range(len(audio))]), len(audio),len(audio), realpath(self.path))
 			)
 		Delete("tmp_"+self.path)
 
@@ -856,7 +865,7 @@ class video(modlue_hash):
 		if Rename(self.path, "tmp_"+self.path):
 			return True
 		os.system("ffmpeg -i \"{}\" {} -map 0:a -map 1:v -b:a 320k -c:a copy -pix_fmt yuv420p -shortest \"{}\" -y".format(
-			"tmp_"+self.path, video_render, self.path)
+			realpath("tmp_"+self.path), video_render, realpath(self.path))
 			)
 		Delete("tmp_"+self.path)
 
@@ -900,7 +909,11 @@ class description(module):
 	def output(self):
 		print(self.path)
 		i=0
-		timestamps = [datetime.fromtimestamp(i:=i+track.length).strftime("%M:%S")+" "+track.name for track in self.Tracks]
+		timestamps = []
+		for track in self.Tracks:
+			timestamps.append(str(datetime.timedelta(seconds=int(i)))+" "+track.name)
+			i+=track.length
+
 		string = "\n".join(timestamps)
 		file = open(self.path, "w")
 		file.write(self.Artist+"s new Album " + self.Album + " is now on Youtube!!\nEnjoy our latest Tracks UwU\n\nTimestamps:\n")
@@ -944,7 +957,7 @@ class full(modlue_hash):
 
 	def render(self):
 		audio = f"|{self.Album}/".join([i.path for i in self.Tracks])
-		os.system("ffmpeg -i \"concat:{}/{}\" -c copy \"{}\" -y".format(self.Album, audio, self.path))
+		os.system("ffmpeg -i \"concat:{}/{}\" -c copy \"{}\" -y".format(realpath(self.Album), audio, realpath(self.path)))
 
 	def clear(self):
 		self.Tracks.clear()
@@ -1267,7 +1280,7 @@ class cmd_reorder(cmd_unary):
 		file.write("\n".join([i.name for i in new_state["Tracks"]]))
 		file.close()
 		print("waiting for editor to close")
-		start = datetime.now()
+		start = datetime.datetime.now()
 		if os.name=="nt":
 			process = subprocess.Popen(["start", "/WAIT", "order.txt"], shell=True)
 			process.wait()
@@ -1279,7 +1292,7 @@ class cmd_reorder(cmd_unary):
 			process = subprocess.Popen(
 				cmd)
 			process.wait()
-		end = datetime.now()
+		end = datetime.datetime.now()
 
 		if (end-start).total_seconds()<1:
 			print("Autodetection failed! Press Enter resume")
