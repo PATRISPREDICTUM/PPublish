@@ -77,7 +77,10 @@ class Track(File):
 		return file[start:end]
 
 	def getlength(self):
-		return audioread.audio_open(self.path).duration
+		try:
+			return audioread.audio_open(self.path).duration
+		except:
+			self.valid=False
 	def __eq__(self, Other):
 		if type(Other)==type(self):
 			return self.md5==Other.md5
@@ -115,10 +118,27 @@ class ChangePath:
 		return False
 
 class UpdateTrack:
-	def __init__(self, Track):
-		self.track = Track
+	def __init__(self, old_md5, new_md5):
+		self.md5 = old_md5
+		self.new = new_md5
+
 	def apply(self, state):
+		if track := getTrackByMD5(state["Tracks"], self.md5) == None:
+			print("[ERROR] Could not find Track in state hash: "+self.org)
+			return True
+		track.md5=self.new
 		return False
+
+class LengthChange:
+	def __init__(self, md5, length):
+		self.md5 = md5
+		self.length=length
+
+	def apply(self, state):
+		if track := getTrackByMD5(state["Tracks"], self.md5) == None:
+			print("[ERROR] Could not find Track in state hash: "+self.org)
+			return True
+		track.length=self.length
 
 class NewTrack:
 	def __init__(self, Track):
@@ -139,10 +159,10 @@ class DeleteTrack:
 #		self.path=path
 
 class UpdateVideo:
-	def __init__(self, path):
-		self.path=path
+	def __init__(self, File):
+		self.file=File
 	def apply(self, state):
-		state["Video"]=self.path
+		state["Video"]=self.file
 		return False
 
 class Updatemp3tags:
@@ -187,25 +207,23 @@ class Clear:
 		pass
 
 
+def getTrackAttribute(Tracks, lambda_func):
+	same = [t for t in Tracks if lambda_func(t)]
+	if len(same)==0:
+		return None
+	if len(same)>1:
+		print("[WARNING] Duplicate Tracks found!")
+		print(same)
+	return same[0]
 
 def getTrackByMD5(Tracks, md5):
-	same = [t for t in Tracks if t.md5==md5]
-	if len(same)==0:
-		return None
-	if len(same)>1:
-		print("[WARNING] Duplicate Tracks found!")
-		print(same)
-	return same[0]
+	return getTrackAttribute(Tracks, lambda t: t.md5==md5)
 
 def getTrackByName(Tracks, name):
-	same = [t for t in Tracks if t.name==name]
-	if len(same)==0:
-		return None
-	if len(same)>1:
-		print("[WARNING] Duplicate Tracks found!")
-		print(same)
-	return same[0]
+	return getTrackAttribute(Tracks, lambda t: t.name==name)
 
+def getTrackByPath(Tracks, path):
+	return getTrackAttribute(Tracks, lambda t: t.path==path)
 
 audio_fmt = ["mp3", "wav", "wma", "flac"]
 image_fmt = ["png", "bmp", "jpg", "tiff"]
@@ -219,6 +237,14 @@ def track_add(state, path):
 	if not (path.count("/") + path.count("\\")):
 		path = os.path.join(os.curdir, path)
 
+	reserved_tracks =[]
+	for module in modules:
+		if module.state:
+			reserved_tracks+=module.state["reserved"]
+	if path in reserved_tracks:
+		print("skipped reserved track" + path)
+		return
+
 	if not path.split(".")[-1] in audio_fmt:
 		print(path +" is not an audio file!")
 		return path + " is not a audio file!"
@@ -228,8 +254,12 @@ def track_add(state, path):
 
 	track = Track(path, len(state["Tracks"])+1)
 	if not track.valid:
-		print("File does not exist")
-		return "File is invalid"
+		print("failed to read audio: "+path)
+		invalidate = getTrackByPath(state["Tracks"], path)
+		if invalidate:
+			print("removing track " +invalidate.name)
+			state["Tracks"].remove(invalidate)
+		return "Invalid audio"
 
 	dup = getTrackByMD5(state["Tracks"], track.md5)
 	twin = getTrackByName(state["Tracks"], track.name)
@@ -274,7 +304,10 @@ def Tracks_sort(Tracks):
 	Tracks.sort(key=lambda x: x.index)
 
 def Tracks_length(Tracks):
-	return str(datetime.timedelta(seconds =int(sum([i.length for i in Tracks]))))
+	return sum([i.length for i in Tracks])
+
+def Tracks_length_str(Tracks):
+	return str(datetime.timedelta(seconds =int(Tracks_length(Tracks))))
 
 def dir_prep(directory):
 	directory=directory.strip()
@@ -340,7 +373,7 @@ def getVideo():
 default_paths = { "mp3_path" : "",
 				  "wav_path" : " HQ",
 				  "video_path" : ".mp4",
-				  "full_path" : "mp3"
+				  "full_path" : ".mp3"
 				  }
 
 def setName(conf, name):
@@ -370,17 +403,17 @@ def conf_detect(conf):
 		print("Cover: " + conf["tags"]["Cover"].path)
 	if conf["Video"]:
 		print("Video: " + conf["Video"].path)
-	print("Album length: " + Tracks_length(conf["Tracks"]))
+	print("Album length: " + Tracks_length_str(conf["Tracks"]))
 
 def Rename(old_name, new_name):
 	changed=False
 	while not changed:
 		try:
-			os.rename(old_name, new_name)
+			os.rename(realpath(old_name), realpath(new_name))
 			changed=True
 		except PermissionError:
 			print(old_name+" in use please resolve")
-			time.Sleep(1)
+			time.sleep(1)
 			continue
 		except Exception as e:
 			print("Could not rename : "+str(e))
@@ -406,15 +439,16 @@ def Delete(file):
 
 def Junkify(path):
 	file = getFile(path)
-	name = file.split(".")[0]
 	suffix = ""
+	name = file
 	if file.count("."):
-		suffix = "."+file.split(".")[1]
+		name = ".".join(file.split(".")[:-1])
+		suffix = "."+file.split(".")[-1]
 
 	i=0
-	while name+"_"+str(i) in os.listdir("junk"):
+	while name+"_"+str(i)+suffix in os.listdir("junk"):
 		i+=1
-	Rename(file, "junk/"+name+"_"+str(i)+suffix)
+	Rename(path, "junk/"+name+"_"+str(i)+suffix)
 
 
 def dir_Delete(file):
@@ -442,6 +476,7 @@ def Reset(module):
 class module:
 	def __init__(self):
 		self.name = type(self).__name__
+		self.state=None
 
 	def state_set(self, state):
 		self.state = state
@@ -464,9 +499,75 @@ class module:
 	def description(self):
 		return ""
 
-class mp3(module):
-	def __init__(self):
-		super().__init__()
+	def getMd5(self, md5):
+		if track := getTrackByMD5(self.Tracks, update.org) == None:
+			print("[ERROR] Could not find Track \""+update.track.name+"\"")
+		return track
+
+
+class module_folder(module):
+	def delete(self, track):
+		path = os.path.join(self.path,self.getName(track.index,track.name))
+		if path in self.state["reserved"]:
+			self.state["reserved"].remove(path)
+		Delete(path)
+
+	def clear(self):
+		for track in self.Tracks:
+			self.delete(track)
+		self.Tracks.clear()
+		dir_Delete(self.path)
+	def verify(self, new_state):
+		if not os.path.exists(self.path):
+			Reset(self)
+		else:
+			for track in reversed(self.Tracks):
+				if not self.getName(track.index, track.name) in os.listdir(self.path):
+					self.Tracks.remove(track)
+
+	def Rename(self, old_name, new_name):
+			Rename(os.path.join(self.path,old_name), os.path.join(self.path, new_name))
+			if old_name in self.state["reserved"]:
+				self.state["reserved"].replace(old_name, new_name)
+
+	def handleRename(self, update):
+		track = getTrackByMD5(self.Tracks, update.md5)
+		if track == None:
+			print("[ERROR] Could not find Track in state hash: "+update.md5)
+			return True
+
+		old_name = self.getName(track.index,track.name)
+		if not old_name in os.listdir(self.path):
+			print("[ERROR] Could not find Track in folder \""+track.path+"\"")
+			return True
+
+		new_name = self.getName(track.index, update.new_name)
+		self.Rename(os.path.join(self.path,old_name), os.path.join(self.path, new_name))
+
+	def handleReorder(self, update):
+		if track := self.getMd5(update.md5) == None:
+			return True
+
+		old_name = self.getName(track.index,track.name)
+		if not old_name in os.listdir(self.path):
+			print("[ERROR] Could not find Track in folder \""+old_name+"\"")
+			return True
+
+		new_name = self.getName(update.index,track.name)
+		self.Rename(os.path.join(self.path,old_name), os.path.join(self.path, new_name))
+
+	def handleInit(self, update):
+		try:
+			os.mkdir(update.path)
+		except:
+			for i in os.listdir(update.path):
+				Junkify(os.path.join(update.path,i))
+	def handleChangePath(self, update):
+		if update.module==self.name:
+			return Rename(self.path, update.path)
+
+
+class mp3(module_folder):
 
 	def load(self,):
 		super().load()
@@ -495,47 +596,27 @@ class mp3(module):
 		for track in self.retag:
 			self.ReTag(track)
 
-	def verify(self, new_state):
-		if not os.path.exists(self.path):
-			Reset(self)
-		else:
-			for track in reversed(self.Tracks):
-				if not self.getName(track.index, track.name) in os.listdir(self.path):
-					self.Tracks.remove(track)
-
 	def description(self):
 		return "Creates tagged mp3 files of file with integraded Album Cover"
 
 	def handle(self, task, update):
 		if task == "RenameTrack":
+			if res := self.handleRename(update):
+				return res
 			track = getTrackByMD5(self.Tracks, update.md5)
-			if track == None:
-				print("[ERROR] Could not find Track in state hash: "+update.md5)
-				return True
-
-			old_name = self.getName(track.index,track.name)
-			if not old_name in os.listdir(self.path):
-				print("[ERROR] Could not find Track in folder \""+track.path+"\"")
-				return True
-
-			new_name = self.getName(track.index, update.new_name)
-			Rename(os.path.join(self.path,old_name), os.path.join(self.path, new_name))
 			self.retag_track(track)
 
 		elif task == "ChangePath":
-			if update.module==self.name:
-				return Rename(self.path, update.path)
+			self.handleChangePath(update)
 
 		elif task == "NewTrack":
 			self.rerender_track(update.track)
 
 		elif task == "UpdateTrack":
-			track = getTrackByName(self.Tracks, update.track.name)
-			if track == None:
-				print("[ERROR] Could not find Track \""+update.track.name+"\"")
+			if track := self.getMd5(update.md5) == None:
 				return True
+
 			self.rerender_track(track)
-			track.md5=update.track.md5
 
 		elif task == "DeleteTrack":
 			self.delete(update.track)
@@ -545,32 +626,17 @@ class mp3(module):
 				self.retag_track(track)
 
 		elif task == "Reorder":
+			if res := self.handleReorder(update):
+				return res
+
 			track = getTrackByMD5(self.Tracks, update.md5)
-			if track == None:
-				print("[ERROR] Could not find track! hash: "+update.md5)
-				return True
-
-			old_name = self.getName(track.index,track.name)
-			if not old_name in os.listdir(self.path):
-				print("[ERROR] Could not find Track in folder \""+old_name+"\"")
-				return True
-
-			new_name = self.getName(update.index,track.name)
-			Rename(os.path.join(self.path,old_name), os.path.join(self.path, new_name))
-
 			self.retag_track(track)
 
 		elif task == "Initilize":
-			try:
-				os.mkdir(update.path)
-			except:
-				for i in os.listdir(update.path):
-					Junkify(os.path.join(update.path,i))
+			self.handleInit(update)
 
 		elif task == "Clear":
 			clear()
-
-
 
 		return False
 
@@ -611,21 +677,12 @@ class mp3(module):
 				realpath(track.path),
 				self.getCoverCmd()
 			) + self.getCmdEnd(track))
-
-	def delete(self, Track):
-		Delete(os.path.join(self.path,self.getName(Track.index,Track.name)))
-
-	def clear(self):
-		for track in self.Tracks:
-			self.delete(track)
-		self.Tracks.clear()
-		dir_Delete(self.path)
-		self.path=""
+		path = os.path.join(self.path,self.getName(track.index,track.name))
+		if not path in self.state["reserved"]:
+			self.state["reserved"].append(path)
 
 
-class wav(module):
-	def __init__(self):
-		super().__init__()
+class wav(module_folder):
 
 	def load(self,):
 		super().load()
@@ -633,47 +690,23 @@ class wav(module):
 		self.Cover = self.state["tags"]["Cover"]
 		self.tags = self.state["tags"]
 
-	def verify(self, new_state):
-		if not os.path.exists(self.path):
-			Reset(self)
-		else:
-			for track in reversed(self.Tracks):
-				if not self.getName(track.index, track.name) in os.listdir(self.path):
-					self.Tracks.remove(track)
-
 	def description(self):
 		return "Creates high quality Wav output of album"
 
 	def handle(self, task, update):
 		if task == "RenameTrack":
-			track = getTrackByMD5(self.Tracks, update.md5)
-			if track == None:
-				print("[ERROR] Could not find Track in state hash: "+update.md5)
-				return True
-
-			old_name = self.getName(track.index,track.name)
-			if not old_name in os.listdir(self.path):
-				print("[ERROR] Could not find Track in folder \""+old_name+"\"")
-				return True
-
-			new_name = self.getName(track.index, update.new_name)
-			Rename(os.path.join(self.path,old_name), os.path.join(self.path, new_name))
-			track.name=update.new_name
+			handleRename(update)
 
 		elif task == "ChangePath":
-			if update.module==self.name:
-				return Rename(self.path, update.path)
+			self.handleChangePath(update)
 
 		elif task == "NewTrack":
 			self.Render(update.track)
 
 		elif task == "UpdateTrack":
-			track = getTrackByName(self.Tracks, update.track.name)
-			if track == None:
-				print("[ERROR] Could not find Track \""+update.track.name+"\"")
+			if track := self.getMd5(update.md5) == None:
 				return True
 			self.Render(track)
-			track.md5=update.track.md5
 
 		elif task == "DeleteTrack":
 			self.delete(update.track)
@@ -715,15 +748,10 @@ class wav(module):
 				realpath(os.path.join(self.path,
 				self.getName(track.index, track.name))))
 			)
+		path = os.path.join(self.path,self.getName(track.index,track.name))
+		if not path in self.state["reserved"]:
+			self.state["reserved"].append(path)
 
-	def delete(self, Track):
-		Delete(os.path.join(self.path,self.getName(Track.index,Track.name)))
-
-	def clear(self):
-		for track in self.Tracks:
-			self.delete(track)
-		self.Tracks.clear()
-		dir_Delete(self.path)
 
 class modlue_hash(module):
 
@@ -783,10 +811,14 @@ class video(modlue_hash):
 
 	def start(self):
 		self.job = 0
+		self.length = Tracks_length(self.Tracks)
+		self.new_length = self.length
 
 	def end(self):
 		if not self.Video:
 			return "Video module needs video or cover"
+		if self.new_length>self.length:
+			self.job=3
 		if self.job:
 			res = self.jobs[self.job-1]()
 			self.save()
@@ -806,10 +838,12 @@ class video(modlue_hash):
 		elif task == "NewTrack":
 			self.job=3
 
-		elif task == "UpdateTrack":
-			self.job=3
+		elif task == "LengthChange":
+			if track := getMd5(update.md5) == None:
+				return True
+			self.new_length+=update.length-track-length
 
-		elif task == "DeleteTrack" or task == "Reorder":
+		elif task == "DeleteTrack" or task == "Reorder" or "UpdateTrack":
 			if self.job==0 or self.job==2:
 				self.job=2
 			else:
@@ -844,7 +878,7 @@ class video(modlue_hash):
 		if not len(self.Tracks):
 			return
 		Tracks_sort(self.Tracks)
-		audio = [ i.path for i in self.Tracks]
+		audio = [ realpath(i.path) for i in self.Tracks]
 		if Rename(self.path, "tmp_"+self.path):
 			return True
 		os.system("ffmpeg -i \"{}\" -i \"{}\" -filter_complex \"[{}:0]concat=n={}:v=0:a=1[out]\" -map [out] -map {}:v -c:v copy -b:a 320k -acodec libmp3lame -pix_fmt yuv420p -shortest \"{}\" -y".format(
@@ -875,8 +909,6 @@ class video(modlue_hash):
 		Delete("tmp_"+self.path)
 
 class description(module):
-	def __init__(self):
-		super().__init__()
 
 	def load(self,):
 		super().load()
@@ -902,7 +934,7 @@ class description(module):
 		if task == "ChangePath":
 			if update.module==self.name:
 				Rename(self.path, update.path)
-		elif task == "NewTrack" or task == "UpdateTrack" or task == "DeleteTrack" or task == "Reorder":
+		elif task == "NewTrack" or task == "LengthChange" or task == "DeleteTrack" or task == "Reorder":
 			self.rerender=True
 
 
@@ -925,8 +957,6 @@ class description(module):
 		Delete(self.path)
 
 class full(modlue_hash):
-	def __init__(self):
-		super().__init__()
 
 	def load(self,):
 		super().load()
@@ -935,16 +965,16 @@ class full(modlue_hash):
 
 
 	def start(self):
-		pass
+		self.rerender =False
 
 	def end(self):
-		if self.job:
+		if self.rerender:
+			self.render()
 			self.save()
-			return res
 		return False
 
 	def description(self):
-		return "Combines all Tracks into one high quality wav file"
+		return "Combines all Tracks into one continuous audio stream"
 
 	def handle(self, task, update):
 		if task == "ChangePath":
@@ -956,15 +986,17 @@ class full(modlue_hash):
 		return False
 
 	def render(self):
-		audio = f"|{self.Album}/".join([i.path for i in self.Tracks])
-		os.system("ffmpeg -i \"concat:{}/{}\" -c copy \"{}\" -y".format(realpath(self.Album), audio, realpath(self.path)))
+		audio = [realpath(i.path) for i in self.Tracks]
+		cmd = "ffmpeg -i \"{}\" -filter_complex \"[{}:0]concat=n={}:v=0:a=1[out]\" -map [out] \"{}\" -y".format(
+			"\" -i \"".join(audio), ":0][".join([str(i) for i in range(len(audio))]), len(audio), realpath(self.path))
+		print(cmd)
+		os.system(cmd)
 
 	def clear(self):
 		self.Tracks.clear()
 		Delete(self.path)
-		self.state[self.name+"_path"]=""
 
-modules = [ mp3(), wav(), video(), description() ]
+modules = [ mp3(), wav(), full(), video(), description() ]
 
 def conf_default(conf):
 	conf.clear()
@@ -973,6 +1005,7 @@ def conf_default(conf):
 	conf["Album"] = ""
 	conf["dirs"] = []
 	conf["removed"] = []
+	conf["reserved"] = []
 
 	#mp3 tags
 	conf["tags"]={}
@@ -1018,10 +1051,14 @@ def getDiff(old_state, new_state):
 				diff.append(DeleteTrack(track))
 		else:
 			for new_track in new_state["Tracks"]:
-				if (track == new_state or track.name==new_track.name) and track.index!=new_track.index:
-					diff.append(Reorder(track.md5, new_track.index))
 				if track==new_track and track.name!=new_track.name:
 					diff.append(RenameTrack(track.md5, new_track.name))
+
+				if track == new_track or track.name==new_track.name:
+					if track.index!=new_track.index:
+						diff.append(Reorder(track.md5, new_track.index))
+					if track.length!=new_track.length:
+						diff.append(LengthChange(track.md5, new_track.length))
 
 
 	for track in new_state["Tracks"]:
@@ -1029,7 +1066,7 @@ def getDiff(old_state, new_state):
 			Found=False
 			for old_track in old_state["Tracks"]:
 				if track.name==old_track.name:
-					diff.append(UpdateTrack(old_track))
+					diff.append(UpdateTrack(old_track.md5, new_track.md5))
 					Found=True
 					break
 			if not Found:
@@ -1255,7 +1292,7 @@ class cmd_fam_ls(cmd_unary):
 
 class cmd_length(cmd_unary):
 	def _run(self):
-		print(Tracks_length(new_state["Tracks"]))
+		print(Tracks_length_str(new_state["Tracks"]))
 
 	def id(self):
 		return "length"
