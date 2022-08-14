@@ -13,6 +13,9 @@ current_states = {}
 new_state = {}
 save = {}
 
+def join(a, b):
+	return os.path.join(a, b).replace("\\", "/")
+
 def realpath(path):
 	prefix=""
 	if os.name=="nt":
@@ -235,13 +238,17 @@ fmts = audio_fmt+image_fmt+video_fmt
 
 def track_add(state, path):
 
-	if not (path.count("/") + path.count("\\")):
-		path = os.path.join(os.curdir, path)
+	if not path.count("/"):
+		path = join(os.curdir, path)
 
 	reserved_tracks =[]
 	for module in modules:
 		if module.state:
 			reserved_tracks+=module.state["reserved"]
+
+	for i,rt in enumerate(reserved_tracks):
+		if not rt.count("/"):
+			reserved_tracks[i] = join(os.curdir, rt)
 	if path in reserved_tracks:
 		print("skipped reserved track" + path)
 		return
@@ -407,6 +414,19 @@ def conf_detect(conf):
 	if conf["Video"]:
 		print("Video: " + conf["Video"].path)
 	print("Album length: " + Tracks_length_str(conf["Tracks"]))
+
+def conf_check(conf):
+	# check monitored directories
+	for directory in conf["dirs"]:
+		dir_add(conf, True, directory)
+
+	# check track validities
+	for track in conf["Tracks"]:
+		track.load()
+		if not track.valid:
+			print(track.name + " became invalid")
+			track_rm(conf, track, False)
+
 
 def Rename(old_name, new_name):
 	changed=False
@@ -596,7 +616,7 @@ class module:
 class module_folder(module):
 
 	def delete(self, track):
-		path = os.path.join(self.path,self.getName(track.index,track.name))
+		path = join(self.path,self.getName(track.index,track.name))
 		if path in self.state["reserved"]:
 			self.state["reserved"].remove(path)
 		Delete(path)
@@ -614,17 +634,17 @@ class module_folder(module):
 			for track in reversed(self.Tracks):
 				if not self.getName(track.index, track.name) in os.listdir(realpath(self.path)):
 					self.Tracks.remove(track)
-					path = os.path.join(self.path,self.getName(track.index,track.name))
+					path = join(self.path,self.getName(track.index,track.name))
 					if path in self.state["reserved"]:
 						self.state["reserved"].remove(path)
 
 			track_names = [self.getName(t.index, t.name) for t in self.Tracks]
 			for file in os.listdir(realpath(self.path)):
 				if not file in track_names:
-					Junkify(os.path.join(self.path, file))
+					Junkify(join(self.path, file))
 
 	def Rename(self, old_name, new_name):
-			Rename(os.path.join(self.path,old_name), os.path.join(self.path, new_name))
+			Rename(join(self.path,old_name), join(self.path, new_name))
 			if old_name in self.state["reserved"]:
 				self.state["reserved"].remove(old_name)
 				self.state["reserved"].append(new_name)
@@ -661,7 +681,7 @@ class module_folder(module):
 			os.mkdir(update.path)
 		except:
 			for i in os.listdir(realpath(update.path)):
-				Junkify(os.path.join(update.path,i))
+				Junkify(join(update.path,i))
 
 	def handleChangePath(self, update):
 		if update.module==self.name:
@@ -678,7 +698,7 @@ class module_folder(module):
 		f_input.map=["a"]
 
 		output=self.getOutput(track)
-		output.path=os.path.join(self.path, self.getName(track.index, track.name))
+		output.path=join(self.path, self.getName(track.index, track.name))
 
 		ffmpeg_inst.inputs.append(f_input)
 		ffmpeg_inst.output = output
@@ -701,12 +721,12 @@ class mp3(module_folder):
 	def getOutput(self, track):
 		ffmpeg_out = ffmpeg_output()
 		ffmpeg_output.attributes = ["id3v2_version 3",
-										f"metadata title=\"{track.name}\"",
-										f"metadata track=\"{track.index}\"",
-										f"metadata album_artist=\"{self.tags['Artist']}\"",
-										f"metadata album=\"{self.Album}\"",
-										f"metadata genre=\"{self.tags['Genre']}\"",
-										f"metadata artist=\"{','.join(self.tags['feat'])}\""]
+									f"metadata title=\"{track.name}\"",
+									f"metadata track=\"{track.index}\"",
+									f"metadata album_artist=\"{self.tags['Artist']}\"",
+									f"metadata album=\"{self.Album}\"",
+									f"metadata genre=\"{self.tags['Genre']}\"",
+									f"metadata artist=\"{','.join(self.tags['feat'])}\""]
 
 		return ffmpeg_output
 
@@ -782,11 +802,11 @@ class mp3(module_folder):
 	def ReTag(self, track):
 		# rename old track
 		name=self.getName(track.index,track.name)
-		tmp_path = os.path.join(self.path, "tmp_"+name)
+		tmp_path = join(self.path, "tmp_"+name)
 		if not name in os.listdir(realpath(self.path)):
 			print("[ERROR] could not find Track \""+track.name+"\"")
 			return True
-		if Rename(os.path.join(self.path, name), tmp_path):
+		if Rename(join(self.path, name), tmp_path):
 			return True
 
 		ffmpeg_inst = ffmpeg()
@@ -797,7 +817,7 @@ class mp3(module_folder):
 
 		output=self.getOutput(track)
 		output.attributes.append("c:a copy")
-		output.path=os.path.join(self.path, self.getName(track.index, track.name))
+		output.path=join(self.path, self.getName(track.index, track.name))
 
 		ffmpeg_inst.inputs.append(f_input)
 		ffmpeg_inst.output = output
@@ -811,7 +831,9 @@ class mp3(module_folder):
 
 	def Render_add_cover(self, inst):
 		# add image stream if cover exists
+		print(self.state["tags"])
 		if self.Cover:
+			print(self.Cover.valid)
 			if self.Cover.valid:
 				cover = ffmpeg_input()
 				cover.streams.append(self.Cover.path)
@@ -867,14 +889,14 @@ class wav(module_folder):
 
 			track.index=update.index
 			new_name = self.getName(track.index,track.name)
-			Rename(os.path.join(self.path,old_name), os.path.join(self.path, new_name))
+			Rename(join(self.path,old_name), join(self.path, new_name))
 
 		elif task == "Initilize":
 			try:
 				os.mkdir(update.path)
 			except:
 				for i in os.listdir(realpath(update.path)):
-					Junkify(os.path.join(update.path,i))
+					Junkify(join(update.path,i))
 
 		elif task == "Clear":
 			clear()
@@ -951,7 +973,9 @@ class video(modlue_hash):
 
 	def end(self):
 		if not self.Video:
-			return "Video module needs video or cover"
+			msg = "Video module needs video or cover"
+			print(msg)
+			return msg
 		if self.job:
 			res = self.jobs[self.job-1]()
 			self.save()
@@ -1115,6 +1139,8 @@ class full(modlue_hash):
 		if self.rerender:
 			self.render()
 			self.save()
+			if not self.path in self.state["reserved"]:
+				self.state["reserved"].append(self.path)
 		return False
 
 	def description(self):
@@ -1143,6 +1169,8 @@ class full(modlue_hash):
 	def clear(self):
 		self.Tracks.clear()
 		Delete(self.path)
+		if self.path in self.state["reserved"]:
+			self.state["reserved"].remove(self.path)
 
 modules = [ mp3(), wav(), full(), video(), description() ]
 
@@ -1240,6 +1268,7 @@ def module_run(current_state, new_state, module):
 		if module.handle(task, diff):
 			break
 		diff.apply(current_state) # apply difference
+	module.load()
 	return module.end()
 
 
@@ -1250,6 +1279,7 @@ def pub_save():
 	pickle.dump(save, open(savefile, "wb"))
 
 if savefile in os.listdir():
+	print("Loading savefile!")
 	save = pickle.load(open(savefile, "rb"))
 
 	current_states = save["current_states"]
@@ -1262,8 +1292,8 @@ if savefile in os.listdir():
 			new_state[module.name+"_path"]=""
 		module.state_set(current_states[module.name])
 
-	for directory in new_state["dirs"]:
-		dir_add(new_state, True, directory)
+	conf_check(new_state)
+
 else:
 	print("---Analyzing Environment---")
 	new_state = conf_default({})
@@ -1292,10 +1322,16 @@ class Var_get_set:
 
 class Var_File(Var_get_set):
 	def set(self, val):
-		self.field[self.key] = File(val)
+		file = File(val)
+		if not file.valid:
+			print("File invalid!")
+			return
+		self.field[self.key] = file
 
 	def get(self):
-		return self.field[self.key].path
+		if self.field[self.key]:
+			return self.field[self.key].path
+		return "Not Found!"
 
 class Var_Name(Var_get_set):
 	def set(self, val):
@@ -1358,8 +1394,7 @@ class cmd_detect(cmd_unary):
 
 class cmd_check(cmd_unary):
 	def _run(self):
-		for directory in new_state["dirs"]:
-			dir_add(new_state, True, directory)
+		conf_check(new_state)
 
 	def description(self):
 		return "Checks all monitored directories for new Tracks"
@@ -1587,7 +1622,7 @@ class cmd_addi(cmd):
 		for i in args[1:]:
 			index=int(i)-1
 			if index<len(files):
-				track_add(new_state, os.path.join(args[0], files[index]))
+				track_add(new_state, join(args[0], files[index]))
 			else:
 				errors.append(i)
 		if len(errors):
