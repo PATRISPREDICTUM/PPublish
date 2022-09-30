@@ -42,7 +42,7 @@ class File:
 	def hash(self):
 		with open(self.path, "rb") as f:
 			file_hash = hashlib.md5()
-			while chunk := f.read(8192):
+			while (chunk := f.read(8192)):
 				file_hash.update(chunk)
 
 			return file_hash.hexdigest()
@@ -127,9 +127,10 @@ class UpdateTrack:
 		self.new = new_md5
 
 	def apply(self, state):
-		if track := getTrackByMD5(state["Tracks"], self.md5) == None:
+		if (track := getTrackByMD5(state["Tracks"], self.md5)) == None:
 			print("[ERROR] Could not find Track in state hash: "+self.org)
 			return True
+		print(track)
 		track.md5=self.new
 		return False
 
@@ -139,7 +140,7 @@ class LengthChange:
 		self.length=length
 
 	def apply(self, state):
-		if track := getTrackByMD5(state["Tracks"], self.md5) == None:
+		if (track := getTrackByMD5(state["Tracks"], self.md5)) == None:
 			print("[ERROR] Could not find Track in state hash: "+self.org)
 			return True
 		track.length=self.length
@@ -217,7 +218,7 @@ def getTrackAttribute(Tracks, lambda_func):
 		return None
 	if len(same)>1:
 		print("[WARNING] Duplicate Tracks found!")
-		print(same)
+		print([i.name for i in same])
 	return same[0]
 
 def getTrackByMD5(Tracks, md5):
@@ -660,8 +661,8 @@ class module_folder(module):
 			print("[ERROR] Could not find Track in folder \""+track.path+"\"")
 			return True
 
-		new_name = self.getName(track.index, update.new_name)
-		self.Rename(old_name, new_name)
+		new_path = self.getName(track.index, update.new_path)
+		self.Rename(old_name, new_path)
 
 	def handleReorder(self, update):
 		if not (track := self.getMd5(update.md5)):
@@ -756,7 +757,7 @@ class mp3(module_folder):
 
 	def handle(self, task, update):
 		if task == "RenameTrack":
-			if res := self.handleRename(update):
+			if (res := self.handleRename(update)):
 				return res
 			track = getTrackByMD5(self.Tracks, update.md5)
 			self.retag_track(track)
@@ -781,7 +782,7 @@ class mp3(module_folder):
 				self.retag_track(track)
 
 		elif task == "Reorder":
-			if res := self.handleReorder(update):
+			if (res := self.handleReorder(update)):
 				return res
 
 			track = getTrackByMD5(self.Tracks, update.md5)
@@ -860,7 +861,7 @@ class wav(module_folder):
 
 	def handle(self, task, update):
 		if task == "RenameTrack":
-			handleRename(update)
+			self.handleRename(update)
 
 		elif task == "ChangePath":
 			self.handleChangePath(update)
@@ -1705,7 +1706,7 @@ while run:
 		if not Found:
 			for module in modules:
 				if cmd == module.name:
-					if error := module_run(current_states[module.name], new_state, module):
+					if (error := module_run(current_states[module.name], new_state, module)):
 						print("[ERROR] Module falied to run: " +str(error))
 					Found=True
 					break
