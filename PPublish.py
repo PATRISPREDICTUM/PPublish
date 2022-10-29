@@ -163,6 +163,13 @@ class DeleteTrack:
 #	def __init__(self, path):
 #		self.path=path
 
+class ChangeRecTime:
+	def __init__(self, new_time):
+		self.new_time=new_time
+	def apply(self, state):
+		state["rec_time"]=self.new_time
+		return False
+
 class UpdateVideo:
 	def __init__(self, File):
 		self.file=File
@@ -316,8 +323,8 @@ def Tracks_sort(Tracks):
 def Tracks_length(Tracks):
 	return sum([i.length for i in Tracks])
 
-def Tracks_length_str(Tracks):
-	return str(datetime.timedelta(seconds =int(Tracks_length(Tracks))))
+def Time_str(seconds):
+	return str(datetime.timedelta(seconds =int(seconds)))
 
 def dir_prep(directory):
 	directory=directory.strip().replace("\\","/")
@@ -414,10 +421,11 @@ def conf_detect(conf):
 		print("Cover: " + conf["tags"]["Cover"].path)
 	if conf["Video"]:
 		print("Video: " + conf["Video"].path)
-	print("Album length: " + Tracks_length_str(conf["Tracks"]))
+	print("Album length: " + Time_str(Tracks_length(conf["Tracks"])))
 
 def conf_check(conf):
 	# check monitored directories
+	print("Check")
 	for directory in conf["dirs"]:
 		dir_add(conf, True, directory)
 
@@ -508,7 +516,7 @@ class ffmpeg_input:
 		self.specifiers=[] # stream_loop etc
 		self.streams = [] # paths to streams
 		self.map = [] # a and v
-		self.filters = [] # optinal additional filters
+		self.filters = [] # optional additional filters
 
 class ffmpeg_output:
 	def __init__(self):
@@ -1027,6 +1035,9 @@ class video(modlue_hash):
 			else:
 				cover.specifiers=["loop 1"]
 				inst.output.attributes.append("pix_fmt yuv420p")
+
+			# fix ffmpeg odd dimension error https://stackoverflow.com/questions/20847674/ffmpeg-libx264-height-not-divisible-by-2
+			cover.filters.append("pad=ceil(iw/2)*2:ceil(ih/2)*2")
 			inst.inputs.append(cover)
 
 	def extend_audio(self, inst):
@@ -1173,7 +1184,159 @@ class full(modlue_hash):
 		if self.path in self.state["reserved"]:
 			self.state["reserved"].remove(self.path)
 
-modules = [ mp3(), wav(), full(), video(), description() ]
+class tl_sketch(modlue_hash):
+
+	def load(self,):
+		super().load()
+		self.path = self.state[self.name+"_path"]
+		self.Video = self.state["Video"]
+		self.rec_time = self.state["rec_time"]
+
+	def start(self):
+		self.job = 0
+
+	def end(self):
+		if self.job:
+			self.Render()
+			self.save()
+
+		return False
+
+	def description(self):
+		return "Creates an Arduino Sketch to display track info for a timelapse video"
+
+	def handle(self, task, update):
+
+		if task == "ChangePath":
+			if update.module==self.name:
+				Rename(self.path, update.path)
+
+		elif task == "DeleteTrack" or task == "Reorder" or task == "UpdateTrack" or task == "NewTrack" or task == "RenameTrack" or task == "ChangeRecTime":
+			self.job=1
+
+		elif task == "Clear":
+			clear()
+
+		return False
+
+
+	def Render(self):
+		print(self.rec_time/Tracks_length(self.Tracks))
+		print(str(self.rec_time) +":"+ str(Tracks_length(self.Tracks)))
+		file = open(self.path, "w")
+		file.write("""#include <Wire.h> 
+#include <LiquidCrystal_I2C.h>
+
+LiquidCrystal_I2C lcd(0x27,20,4);
+
+#define FPS 5
+
+#define TIME_MULT """+ str(self.rec_time/Tracks_length(self.Tracks)) +"""
+#define SCROLL_TIME 2
+
+struct Track
+{
+  const char *title;
+  double time;
+};
+
+
+struct Track tracks[] = {
+	{"Starting in ...", 5.0/TIME_MULT},
+""")
+		for track in self.Tracks:
+			file.write("	{\""+track.name+"\", "+ str(track.length) + "},\n")
+
+		file.write("""
+};
+const uint32_t tracks_length = sizeof(tracks)/sizeof(*tracks);
+
+void setup()
+{          
+  // init LCD
+  lcd.init();
+  lcd.backlight();
+
+
+  uint32_t title_offset=0,
+           tracks_index=0;
+           
+  uint8_t percentage;
+  double time=0,
+  		 time_last=0,
+         length=tracks[0].time,
+         last_scroll=0,
+         last_p=0;
+  size_t len;
+  unsigned long start, last;
+  
+  lcd.print(tracks[tracks_index].title);
+  len = strlen(tracks[tracks_index].title);
+
+  int32_t wait;
+
+  start=millis();
+  last=start;
+  while(tracks_index < tracks_length)
+  {
+    percentage=(time-time_last)*18/tracks[tracks_index].time;
+    if(percentage && percentage<18){
+      for(int i=last_p; i<percentage; i++)
+      {
+        lcd.setCursor(i-1,1);
+        lcd.print((char)255);
+      }
+      last_p=percentage;
+    }
+
+    if(time-last_scroll>=SCROLL_TIME && len>16){
+      last_scroll=time;
+
+      title_offset=++title_offset%len;
+      lcd.setCursor(0,0);
+      int i;
+      for(i=0; i<len-title_offset && i<16; i++)
+        lcd.print(tracks[tracks_index].title[i+title_offset]);
+      if(i++<16)
+        lcd.print(" ");
+      if(i++<16)
+        lcd.print(" ");
+      for(int x=0; i+x<16; x++)
+        lcd.print(tracks[tracks_index].title[x]);
+    }
+    
+    // wait frame
+    wait=1000.0/FPS-millis()+last;
+    if(wait>0)
+      delay(wait);
+    last=millis();
+    time=(millis()-start)/1000.0/TIME_MULT;
+    
+    // if track over -> goto next
+    if(time-time_last>tracks[tracks_index].time){
+      time_last+=tracks[tracks_index].time;
+      last_scroll=time;
+      title_offset=0;
+      length=tracks[++tracks_index].time;
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print(tracks[tracks_index].title);
+      len = strlen(tracks[tracks_index].title);
+    }
+  }
+}
+
+void loop(){};""")
+		file.close()
+
+
+	def clear(self):
+		self.Tracks.clear()
+		Delete(self.path)
+
+
+
+modules = [ mp3(), wav(), full(), video(), description(), tl_sketch() ]
 
 def conf_default(conf):
 	conf.clear()
@@ -1191,12 +1354,14 @@ def conf_default(conf):
 	conf["tags"]["feat"]   = []
 	conf["tags"]["Cover"]  = None
 	conf["Video"] = None
+	conf["rec_time"]=12*60*60 # 12 hours
 
 	# module conf
 	for module in modules:
 		conf[module.name+"_path"] = ""
 
 	conf["description_path"] = "Description.txt"
+	conf["tl_sketch_path"] = "tl_sketch.ino"
 
 	return conf
 
@@ -1208,6 +1373,9 @@ def getDiff(old_state, new_state):
 	if old_state["Album"]!=new_state["Album"]:
 		diff.append(RenameAlbum(new_state["Album"]))
 		diff.append(Updatemp3tags(new_state["tags"]))
+
+	if old_state["rec_time"]!=new_state["rec_time"]:
+		diff.append(ChangeRecTime(new_state["rec_time"]))
 
 	for module in modules:
 		if module.name+"_path" in old_state:
@@ -1289,9 +1457,11 @@ if savefile in os.listdir():
 
 	for module in modules:
 		if not module.name in current_states:
+			print("New Module " + module.name)
 			current_states[module.name] = conf_default({})
 			new_state[module.name+"_path"]=""
 		module.state_set(current_states[module.name])
+
 
 	conf_check(new_state)
 
@@ -1302,8 +1472,6 @@ else:
 	conf_detect(new_state)
 	for module in modules:
 		current_states[module.name] = conf_default({})
-
-	for module in modules:
 		module.state_set(current_states[module.name])
 
 	pub_save()
@@ -1320,6 +1488,27 @@ class Var_get_set:
 
 	def get(self):
 		return self.field[self.key]
+
+class Var_Time:
+	def __init__(self, field, key):
+		self.field = field
+		self.key = key
+	def set(self, val):
+		while True:
+			try:
+				s = time.strptime(val, "%H:%M:%S")
+				d = datetime.timedelta(hours=s.tm_hour, minutes=s.tm_min, seconds=s.tm_sec).total_seconds()
+				print(str(d) + " sec")
+			except Exception as e:
+				print(e)
+				print("Please enter correct time in HH:MM:SS format")
+				continue
+			break
+
+		self.field[self.key]=d
+
+	def get(self):
+		return Time_str(self.field[self.key])
 
 class Var_File(Var_get_set):
 	def set(self, val):
@@ -1343,7 +1532,8 @@ var_set = { "Cover"   : Var_File(new_state["tags"], "Cover"),
 			"Video"  : Var_File(new_state, "Video"),
 			"Artist" : Var_get_set(new_state["tags"], "Artist"),
 			"Genre"  : Var_get_set(new_state["tags"], "Genre"),
-			"Album"  :	Var_Name(new_state, "Album")
+			"Album"  :	Var_Name(new_state, "Album"),
+			"rec_time" : Var_Time(new_state, "rec_time")
 		   }
 #append paths to var_set
 for module in modules:
@@ -1494,7 +1684,7 @@ class cmd_fam_ls(cmd_unary):
 
 class cmd_length(cmd_unary):
 	def _run(self):
-		print(Tracks_length_str(new_state["Tracks"]))
+		print(Time_str(Tracks_length(new_state["Tracks"])))
 
 	def id(self):
 		return "length"
