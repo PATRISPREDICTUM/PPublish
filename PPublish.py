@@ -1028,7 +1028,12 @@ class video(modlue_hash):
 			cover = ffmpeg_input()
 			cover.streams = [ self.Video.path ]
 			cover.map=["v"]
-			inst.output.attributes.append("shortest")
+			inst.output.attributes.append("shortest") # doesn't work; ffmpeg bug
+			# Workaround
+
+			inst.output.attributes.append("t " + Time_str(Tracks_length(self.Tracks)))
+
+
 			if self.Video.path.split(".")[-1] in video_fmt:
 				cover.specifiers=["stream_loop -1"]
 				#inst.output.attributes.append("c:v copy") # massive speed boost, but enormous file size
