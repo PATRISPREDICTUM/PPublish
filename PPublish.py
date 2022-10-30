@@ -1291,14 +1291,17 @@ void setup()
   {
     percentage=(time-time_last)*18/tracks[tracks_index].time;
     if(percentage<18){
+
+      lcd.setCursor((uint8_t)percentage+1,1);
+      if(percentage<17)
+        lcd.print((uint8_t)((percentage-(uint8_t)percentage)*10));
+
       for(int i=last_p; i<(uint8_t)percentage; i++)
       {
         lcd.setCursor(i-1,1);
         lcd.print((char)255);
       }
-      lcd.setCursor((uint8_t)percentage,1);
-      if(percentage<17)
-        lcd.print((uint8_t)((percentage-(uint8_t)percentage)*10));
+
       last_p=percentage;
     }
 
