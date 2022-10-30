@@ -1271,12 +1271,12 @@ void setup()
   uint32_t title_offset=0,
            tracks_index=0;
            
-  uint8_t ;
+  uint8_t last_p=0,
+          pint;
   double time=0,
   		 time_last=0,
          length=tracks[0].time,
          last_scroll=0,
-         last_p=0,
          percentage;
   size_t len;
   unsigned long start, last;
@@ -1290,20 +1290,21 @@ void setup()
   last=start;
   while(tracks_index < tracks_length)
   {
-    percentage=(time-time_last)*18/tracks[tracks_index].time;
-    if(percentage<18){
+    percentage=(time-time_last)*17/tracks[tracks_index].time;
+    pint = (uint8_t)percentage;
+    if(pint<17){
 
-      lcd.setCursor((uint8_t)percentage+1,1);
-      if(percentage<17)
-        lcd.print((uint8_t)((percentage-(uint8_t)percentage)*10));
+      lcd.setCursor(pint,1);
+      if(percentage<16)
+        lcd.print((uint8_t)((percentage-pint)*10));
 
-      for(int i=last_p; i<(uint8_t)percentage; i++)
+      for(int i=last_p; i<pint; i++)
       {
         lcd.setCursor(i-1,1);
         lcd.print((char)255);
       }
 
-      last_p=percentage;
+      last_p=pint;
     }
 
     if(time-last_scroll>=SCROLL_TIME && len>16){
