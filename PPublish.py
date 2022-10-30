@@ -1300,7 +1300,7 @@ void setup()
 
       for(int i=last_p; i<pint; i++)
       {
-        lcd.setCursor(i-1,1);
+        lcd.setCursor(i,1);
         lcd.print((char)255);
       }
 
