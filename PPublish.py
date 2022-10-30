@@ -1203,7 +1203,6 @@ class tl_sketch(module):
 	def end(self):
 		if self.job:
 			self.Render()
-			self.save()
 
 		return False
 
@@ -1230,10 +1229,10 @@ class tl_sketch(module):
 		print(str(self.rec_time) +":"+ str(Tracks_length(self.Tracks)))
 		try:
 			os.mkdir(self.path)
-		except:
-			pass
+		except Exception as e:
+			print(e)
 
-		file = open(self.path+"/sketch.ino", "w")
+		file = open(join(self.path, getFile(self.path)+".ino"), "w")
 		file.write("""#include <Wire.h> 
 #include <LiquidCrystal_I2C.h>
 
