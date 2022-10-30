@@ -1194,6 +1194,7 @@ class tl_sketch(module):
 	def load(self,):
 		super().load()
 		self.path = self.state[self.name+"_path"]
+		self.sketch_path = join(self.path, getFile(self.path)+".ino")
 		self.Video = self.state["Video"]
 		self.rec_time = self.state["rec_time"]
 
@@ -1232,7 +1233,7 @@ class tl_sketch(module):
 		except Exception as e:
 			print(e)
 
-		file = open(join(self.path, getFile(self.path)+".ino"), "w")
+		file = open(self.sketch_path, "w")
 		file.write("""#include <Wire.h> 
 #include <LiquidCrystal_I2C.h>
 
@@ -1348,7 +1349,8 @@ void loop(){};""")
 
 	def clear(self):
 		self.Tracks.clear()
-		Delete(self.path)
+		Delete(self.sketch_path)
+		dir_Delete(self.path)
 
 
 
