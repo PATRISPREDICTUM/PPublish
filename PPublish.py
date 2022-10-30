@@ -921,7 +921,7 @@ class wav(module_folder):
 		out.attributes=["ar 44100", "ac 2"]
 		return out
 
-class modlue_hash(module):
+class module_hash(module):
 
 	def save(self):
 		self.state["output"]=File(realpath(self.path))
@@ -967,7 +967,7 @@ class modlue_hash(module):
 			self.search_sub(new_state)
 		return
 
-class video(modlue_hash):
+class video(module_hash):
 	def __init__(self):
 		super().__init__()
 		self.jobs = [self.Render_video, self.Render_audio, self.Render]
@@ -1141,7 +1141,7 @@ class description(module):
 		self.Tracks.clear()
 		Delete(self.path)
 
-class full(modlue_hash):
+class full(module_hash):
 
 	def load(self,):
 		super().load()
@@ -1189,7 +1189,7 @@ class full(modlue_hash):
 		if self.path in self.state["reserved"]:
 			self.state["reserved"].remove(self.path)
 
-class tl_sketch(modlue_hash):
+class tl_sketch(module):
 
 	def load(self,):
 		super().load()
@@ -1228,7 +1228,12 @@ class tl_sketch(modlue_hash):
 	def Render(self):
 		print(self.rec_time/Tracks_length(self.Tracks))
 		print(str(self.rec_time) +":"+ str(Tracks_length(self.Tracks)))
-		file = open(self.path, "w")
+		try:
+			os.mkdir(self.path)
+		except:
+			pass
+
+		file = open(self.path+"/sketch.ino", "w")
 		file.write("""#include <Wire.h> 
 #include <LiquidCrystal_I2C.h>
 
@@ -1266,12 +1271,13 @@ void setup()
   uint32_t title_offset=0,
            tracks_index=0;
            
-  uint8_t percentage;
+  uint8_t ;
   double time=0,
   		 time_last=0,
          length=tracks[0].time,
          last_scroll=0,
-         last_p=0;
+         last_p=0,
+         percentage;
   size_t len;
   unsigned long start, last;
   
@@ -1285,12 +1291,15 @@ void setup()
   while(tracks_index < tracks_length)
   {
     percentage=(time-time_last)*18/tracks[tracks_index].time;
-    if(percentage && percentage<18){
-      for(int i=last_p; i<percentage; i++)
+    if(percentage<18){
+      for(int i=last_p; i<(uint8_t)percentage; i++)
       {
         lcd.setCursor(i-1,1);
         lcd.print((char)255);
       }
+      lcd.setCursor((uint8_t)percentage,1);
+      if(percentage<17)
+        lcd.print((uint8_t)((percentage-(uint8_t)percentage)*10));
       last_p=percentage;
     }
 
@@ -1366,7 +1375,7 @@ def conf_default(conf):
 		conf[module.name+"_path"] = ""
 
 	conf["description_path"] = "Description.txt"
-	conf["tl_sketch_path"] = "tl_sketch.ino"
+	conf["tl_sketch_path"] = "tl_sketch"
 
 	return conf
 
