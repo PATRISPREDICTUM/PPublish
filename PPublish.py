@@ -459,7 +459,7 @@ def Delete(file):
 			os.remove(file)
 			changed=True
 		except PermissionError:
-			print(old_name+" in use please resolve")
+			print(file+" in use please resolve")
 			time.Sleep(1)
 			continue
 		except FileNotFoundError:
@@ -1229,11 +1229,12 @@ class tl_sketch(module):
 		print(self.rec_time/Tracks_length(self.Tracks))
 		print(str(self.rec_time) +":"+ str(Tracks_length(self.Tracks)))
 		try:
+			Junkify(self.path)
 			os.mkdir(self.path)
 		except Exception as e:
 			print(e)
-
 		file = open(self.sketch_path, "w")
+
 		file.write("""#include <Wire.h> 
 #include <LiquidCrystal_I2C.h>
 
