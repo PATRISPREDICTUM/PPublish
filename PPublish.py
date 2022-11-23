@@ -42,7 +42,7 @@ class File:
 	def hash(self):
 		with open(self.path, "rb") as f:
 			file_hash = hashlib.md5()
-			while chunk := f.read(8192):
+			while (chunk := f.read(8192)):
 				file_hash.update(chunk)
 
 			return file_hash.hexdigest()
@@ -127,10 +127,11 @@ class UpdateTrack:
 		self.new = new_md5
 
 	def apply(self, state):
-		if track := getTrackByMD5(state["Tracks"], self.md5) == None:
+		if (track := getTrackByMD5(state["Tracks"], self.md5)) == None:
 			print("[ERROR] Could not find Track in state hash: "+self.org)
 			return True
-		track.md5=self.new
+		print(track)
+		track.md5=self.new_md5
 		return False
 
 class LengthChange:
@@ -139,7 +140,7 @@ class LengthChange:
 		self.length=length
 
 	def apply(self, state):
-		if track := getTrackByMD5(state["Tracks"], self.md5) == None:
+		if (track := getTrackByMD5(state["Tracks"], self.md5)) == None:
 			print("[ERROR] Could not find Track in state hash: "+self.org)
 			return True
 		track.length=self.length
@@ -161,6 +162,13 @@ class DeleteTrack:
 #class UpateCover:
 #	def __init__(self, path):
 #		self.path=path
+
+class ChangeRecTime:
+	def __init__(self, new_time):
+		self.new_time=new_time
+	def apply(self, state):
+		state["rec_time"]=self.new_time
+		return False
 
 class UpdateVideo:
 	def __init__(self, File):
@@ -217,7 +225,7 @@ def getTrackAttribute(Tracks, lambda_func):
 		return None
 	if len(same)>1:
 		print("[WARNING] Duplicate Tracks found!")
-		print(same)
+		print([i.name for i in same])
 	return same[0]
 
 def getTrackByMD5(Tracks, md5):
@@ -275,10 +283,12 @@ def track_add(state, path):
 		if dup.path!=track.path:
 			print("sub" + dup.path + " ->" + track.path)
 			dup.move(path)
-	elif twin:
-		print("sub " + twin.path + " hash!")
-		twin.md5=track.md5
-	else:
+	if twin:
+		if twin.md5!=track.md5:
+			print("sub " + twin.path + " new hash!")
+			twin.md5=track.md5
+
+	if not dup and not twin:
 		print("Loading Track "+track.path)
 		state["Tracks"].append(track)
 
@@ -315,8 +325,8 @@ def Tracks_sort(Tracks):
 def Tracks_length(Tracks):
 	return sum([i.length for i in Tracks])
 
-def Tracks_length_str(Tracks):
-	return str(datetime.timedelta(seconds =int(Tracks_length(Tracks))))
+def Time_str(seconds):
+	return str(datetime.timedelta(seconds =int(seconds)))
 
 def dir_prep(directory):
 	directory=directory.strip().replace("\\","/")
@@ -413,10 +423,11 @@ def conf_detect(conf):
 		print("Cover: " + conf["tags"]["Cover"].path)
 	if conf["Video"]:
 		print("Video: " + conf["Video"].path)
-	print("Album length: " + Tracks_length_str(conf["Tracks"]))
+	print("Album length: " + Time_str(Tracks_length(conf["Tracks"])))
 
 def conf_check(conf):
 	# check monitored directories
+	print("Check")
 	for directory in conf["dirs"]:
 		dir_add(conf, True, directory)
 
@@ -450,7 +461,7 @@ def Delete(file):
 			os.remove(file)
 			changed=True
 		except PermissionError:
-			print(old_name+" in use please resolve")
+			print(file+" in use please resolve")
 			time.Sleep(1)
 			continue
 		except FileNotFoundError:
@@ -507,7 +518,7 @@ class ffmpeg_input:
 		self.specifiers=[] # stream_loop etc
 		self.streams = [] # paths to streams
 		self.map = [] # a and v
-		self.filters = [] # optinal additional filters
+		self.filters = [] # optional additional filters
 
 class ffmpeg_output:
 	def __init__(self):
@@ -660,8 +671,8 @@ class module_folder(module):
 			print("[ERROR] Could not find Track in folder \""+track.path+"\"")
 			return True
 
-		new_name = self.getName(track.index, update.new_name)
-		self.Rename(old_name, new_name)
+		new_path = self.getName(track.index, update.new_path)
+		self.Rename(old_name, new_path)
 
 	def handleReorder(self, update):
 		if not (track := self.getMd5(update.md5)):
@@ -756,7 +767,7 @@ class mp3(module_folder):
 
 	def handle(self, task, update):
 		if task == "RenameTrack":
-			if res := self.handleRename(update):
+			if (res := self.handleRename(update)):
 				return res
 			track = getTrackByMD5(self.Tracks, update.md5)
 			self.retag_track(track)
@@ -781,7 +792,7 @@ class mp3(module_folder):
 				self.retag_track(track)
 
 		elif task == "Reorder":
-			if res := self.handleReorder(update):
+			if (res := self.handleReorder(update)):
 				return res
 
 			track = getTrackByMD5(self.Tracks, update.md5)
@@ -860,7 +871,7 @@ class wav(module_folder):
 
 	def handle(self, task, update):
 		if task == "RenameTrack":
-			handleRename(update)
+			self.handleRename(update)
 
 		elif task == "ChangePath":
 			self.handleChangePath(update)
@@ -912,7 +923,7 @@ class wav(module_folder):
 		out.attributes=["ar 44100", "ac 2"]
 		return out
 
-class modlue_hash(module):
+class module_hash(module):
 
 	def save(self):
 		self.state["output"]=File(realpath(self.path))
@@ -936,7 +947,7 @@ class modlue_hash(module):
 				found=True
 				break
 		if not found:
-			print("Noghing Found")
+			print("Nothing Found")
 			Reset(self)
 
 	def verify(self, new_state):
@@ -947,7 +958,7 @@ class modlue_hash(module):
 			print("Wasnt Valid")
 			Reset(self)
 			return
-		print("hash: " + check.md5)
+
 		current = File(self.path)
 		if not current.valid:
 			print("file moved")
@@ -958,7 +969,7 @@ class modlue_hash(module):
 			self.search_sub(new_state)
 		return
 
-class video(modlue_hash):
+class video(module_hash):
 	def __init__(self):
 		super().__init__()
 		self.jobs = [self.Render_video, self.Render_audio, self.Render]
@@ -1019,13 +1030,21 @@ class video(modlue_hash):
 			cover = ffmpeg_input()
 			cover.streams = [ self.Video.path ]
 			cover.map=["v"]
-			inst.output.attributes.append("shortest")
+			inst.output.attributes.append("shortest") # doesn't work; ffmpeg bug
+			# Workaround
+
+			inst.output.attributes.append("t " + Time_str(Tracks_length(self.Tracks)))
+
+
 			if self.Video.path.split(".")[-1] in video_fmt:
 				cover.specifiers=["stream_loop -1"]
 				#inst.output.attributes.append("c:v copy") # massive speed boost, but enormous file size
 			else:
 				cover.specifiers=["loop 1"]
 				inst.output.attributes.append("pix_fmt yuv420p")
+
+			# fix ffmpeg odd dimension error https://stackoverflow.com/questions/20847674/ffmpeg-libx264-height-not-divisible-by-2
+			cover.filters.append("pad=ceil(iw/2)*2:ceil(ih/2)*2")
 			inst.inputs.append(cover)
 
 	def extend_audio(self, inst):
@@ -1124,7 +1143,7 @@ class description(module):
 		self.Tracks.clear()
 		Delete(self.path)
 
-class full(modlue_hash):
+class full(module_hash):
 
 	def load(self,):
 		super().load()
@@ -1172,7 +1191,174 @@ class full(modlue_hash):
 		if self.path in self.state["reserved"]:
 			self.state["reserved"].remove(self.path)
 
-modules = [ mp3(), wav(), full(), video(), description() ]
+class tl_sketch(module):
+
+	def load(self,):
+		super().load()
+		self.path = self.state[self.name+"_path"]
+		self.sketch_path = join(self.path, getFile(self.path)+".ino")
+		self.Video = self.state["Video"]
+		self.rec_time = self.state["rec_time"]
+
+	def start(self):
+		self.job = 0
+
+	def end(self):
+		if self.job:
+			self.Render()
+
+		return False
+
+	def description(self):
+		return "Creates an Arduino Sketch to display track info for a timelapse video"
+
+	def handle(self, task, update):
+
+		if task == "ChangePath":
+			if update.module==self.name:
+				Rename(self.path, update.path)
+
+		elif task == "DeleteTrack" or task == "Reorder" or task == "UpdateTrack" or task == "NewTrack" or task == "RenameTrack" or task == "ChangeRecTime":
+			self.job=1
+
+		elif task == "Clear":
+			clear()
+
+		return False
+
+
+	def Render(self):
+		print(self.rec_time/Tracks_length(self.Tracks))
+		print(str(self.rec_time) +":"+ str(Tracks_length(self.Tracks)))
+		try:
+			Junkify(self.path)
+			os.mkdir(self.path)
+		except Exception as e:
+			print(e)
+		file = open(self.sketch_path, "w")
+
+		file.write("""#include <Wire.h> 
+#include <LiquidCrystal_I2C.h>
+
+LiquidCrystal_I2C lcd(0x27,20,4);
+
+#define FPS 5
+
+#define TIME_MULT """+ str(self.rec_time/Tracks_length(self.Tracks)) +"""
+#define SCROLL_TIME 2
+
+struct Track
+{
+  const char *title;
+  double time;
+};
+
+
+struct Track tracks[] = {
+	{"Starting in ...", 5.0/TIME_MULT},
+""")
+		for track in self.Tracks:
+			file.write("	{\""+track.name+"\", "+ str(track.length) + "},\n")
+
+		file.write("""
+};
+const uint32_t tracks_length = sizeof(tracks)/sizeof(*tracks);
+
+void setup()
+{          
+  // init LCD
+  lcd.init();
+  lcd.backlight();
+
+
+  uint32_t title_offset=0,
+           tracks_index=0;
+           
+  uint8_t last_p=0,
+          pint;
+  double time=0,
+  		 time_last=0,
+         length=tracks[0].time,
+         last_scroll=0,
+         percentage;
+  size_t len;
+  unsigned long start, last;
+  
+  lcd.print(tracks[tracks_index].title);
+  len = strlen(tracks[tracks_index].title);
+
+  int32_t wait;
+
+  start=millis();
+  last=start;
+  while(tracks_index < tracks_length)
+  {
+    percentage=(time-time_last)*17/tracks[tracks_index].time;
+    pint = (uint8_t)percentage;
+    if(pint<17){
+
+      lcd.setCursor(pint,1);
+      if(percentage<16)
+        lcd.print((uint8_t)((percentage-pint)*10));
+
+      for(int i=last_p; i<pint; i++)
+      {
+        lcd.setCursor(i,1);
+        lcd.print((char)255);
+      }
+
+      last_p=pint;
+    }
+
+    if(time-last_scroll>=SCROLL_TIME && len>16){
+      last_scroll=time;
+
+      title_offset=++title_offset%len;
+      lcd.setCursor(0,0);
+      int i;
+      for(i=0; i<len-title_offset && i<16; i++)
+        lcd.print(tracks[tracks_index].title[i+title_offset]);
+      if(i++<16)
+        lcd.print(" ");
+      if(i++<16)
+        lcd.print(" ");
+      for(int x=0; i+x<16; x++)
+        lcd.print(tracks[tracks_index].title[x]);
+    }
+    
+    // wait frame
+    wait=1000.0/FPS-millis()+last;
+    if(wait>0)
+      delay(wait);
+    last=millis();
+    time=(millis()-start)/1000.0/TIME_MULT;
+    
+    // if track over -> goto next
+    if(time-time_last>tracks[tracks_index].time){
+      time_last+=tracks[tracks_index].time;
+      last_scroll=time;
+      title_offset=0;
+      length=tracks[++tracks_index].time;
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print(tracks[tracks_index].title);
+      len = strlen(tracks[tracks_index].title);
+    }
+  }
+}
+
+void loop(){};""")
+		file.close()
+
+
+	def clear(self):
+		self.Tracks.clear()
+		Delete(self.sketch_path)
+		dir_Delete(self.path)
+
+
+
+modules = [ mp3(), wav(), full(), video(), description(), tl_sketch() ]
 
 def conf_default(conf):
 	conf.clear()
@@ -1190,12 +1376,14 @@ def conf_default(conf):
 	conf["tags"]["feat"]   = []
 	conf["tags"]["Cover"]  = None
 	conf["Video"] = None
+	conf["rec_time"]=12*60*60 # 12 hours
 
 	# module conf
 	for module in modules:
 		conf[module.name+"_path"] = ""
 
 	conf["description_path"] = "Description.txt"
+	conf["tl_sketch_path"] = "tl_sketch"
 
 	return conf
 
@@ -1207,6 +1395,9 @@ def getDiff(old_state, new_state):
 	if old_state["Album"]!=new_state["Album"]:
 		diff.append(RenameAlbum(new_state["Album"]))
 		diff.append(Updatemp3tags(new_state["tags"]))
+
+	if old_state["rec_time"]!=new_state["rec_time"]:
+		diff.append(ChangeRecTime(new_state["rec_time"]))
 
 	for module in modules:
 		if module.name+"_path" in old_state:
@@ -1288,9 +1479,11 @@ if savefile in os.listdir():
 
 	for module in modules:
 		if not module.name in current_states:
+			print("New Module " + module.name)
 			current_states[module.name] = conf_default({})
 			new_state[module.name+"_path"]=""
 		module.state_set(current_states[module.name])
+
 
 	conf_check(new_state)
 
@@ -1301,8 +1494,6 @@ else:
 	conf_detect(new_state)
 	for module in modules:
 		current_states[module.name] = conf_default({})
-
-	for module in modules:
 		module.state_set(current_states[module.name])
 
 	pub_save()
@@ -1319,6 +1510,27 @@ class Var_get_set:
 
 	def get(self):
 		return self.field[self.key]
+
+class Var_Time:
+	def __init__(self, field, key):
+		self.field = field
+		self.key = key
+	def set(self, val):
+		while True:
+			try:
+				s = time.strptime(val, "%H:%M:%S")
+				d = datetime.timedelta(hours=s.tm_hour, minutes=s.tm_min, seconds=s.tm_sec).total_seconds()
+				print(str(d) + " sec")
+			except Exception as e:
+				print(e)
+				print("Please enter correct time in HH:MM:SS format")
+				continue
+			break
+
+		self.field[self.key]=d
+
+	def get(self):
+		return Time_str(self.field[self.key])
 
 class Var_File(Var_get_set):
 	def set(self, val):
@@ -1342,7 +1554,8 @@ var_set = { "Cover"   : Var_File(new_state["tags"], "Cover"),
 			"Video"  : Var_File(new_state, "Video"),
 			"Artist" : Var_get_set(new_state["tags"], "Artist"),
 			"Genre"  : Var_get_set(new_state["tags"], "Genre"),
-			"Album"  :	Var_Name(new_state, "Album")
+			"Album"  :	Var_Name(new_state, "Album"),
+			"rec_time" : Var_Time(new_state, "rec_time")
 		   }
 #append paths to var_set
 for module in modules:
@@ -1493,7 +1706,7 @@ class cmd_fam_ls(cmd_unary):
 
 class cmd_length(cmd_unary):
 	def _run(self):
-		print(Tracks_length_str(new_state["Tracks"]))
+		print(Time_str(Tracks_length(new_state["Tracks"])))
 
 	def id(self):
 		return "length"
@@ -1559,6 +1772,7 @@ class cmd_reorder(cmd_unary):
 class cmd_all(cmd_unary):
 	def _run(self):
 		for module in modules:
+			print(module.__class__.__name__)
 			module_run(current_states[module.name], new_state, module)
 
 	def id(self):
@@ -1705,7 +1919,7 @@ while run:
 		if not Found:
 			for module in modules:
 				if cmd == module.name:
-					if error := module_run(current_states[module.name], new_state, module):
+					if (error := module_run(current_states[module.name], new_state, module)):
 						print("[ERROR] Module falied to run: " +str(error))
 					Found=True
 					break
