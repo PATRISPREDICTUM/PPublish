@@ -131,7 +131,7 @@ class UpdateTrack:
 			print("[ERROR] Could not find Track in state hash: "+self.org)
 			return True
 		print(track)
-		track.md5=self.new
+		track.md5=self.new_md5
 		return False
 
 class LengthChange:
@@ -283,10 +283,12 @@ def track_add(state, path):
 		if dup.path!=track.path:
 			print("sub" + dup.path + " ->" + track.path)
 			dup.move(path)
-	elif twin:
-		print("sub " + twin.path + " hash!")
-		twin.md5=track.md5
-	else:
+	if twin:
+		if twin.md5!=track.md5:
+			print("sub " + twin.path + " new hash!")
+			twin.md5=track.md5
+
+	if not dup and not twin:
 		print("Loading Track "+track.path)
 		state["Tracks"].append(track)
 
@@ -945,7 +947,7 @@ class module_hash(module):
 				found=True
 				break
 		if not found:
-			print("Noghing Found")
+			print("Nothing Found")
 			Reset(self)
 
 	def verify(self, new_state):
@@ -956,7 +958,7 @@ class module_hash(module):
 			print("Wasnt Valid")
 			Reset(self)
 			return
-		print("hash: " + check.md5)
+
 		current = File(self.path)
 		if not current.valid:
 			print("file moved")
@@ -1770,6 +1772,7 @@ class cmd_reorder(cmd_unary):
 class cmd_all(cmd_unary):
 	def _run(self):
 		for module in modules:
+			print(module.__class__.__name__)
 			module_run(current_states[module.name], new_state, module)
 
 	def id(self):
