@@ -124,7 +124,7 @@ class ChangePath:
 class UpdateTrack:
 	def __init__(self, old_md5, new_md5):
 		self.md5 = old_md5
-		self.new = new_md5
+		self.new_md5 = new_md5
 
 	def apply(self, state):
 		if (track := getTrackByMD5(state["Tracks"], self.md5)) == None:
@@ -787,7 +787,7 @@ class mp3(module_folder):
 		elif task == "DeleteTrack":
 			self.delete(update.track)
 
-		elif task == "Updatemp3tags":
+		elif task == "Updatemp3tags" or task=="RenameAlbum":
 			for track in self.Tracks:
 				self.retag_track(track)
 
@@ -1095,7 +1095,7 @@ class video(module_hash):
 		Delete(self.path)
 		Delete("tmp_"+self.path)
 
-class description(module):
+class description(module_hash):
 
 	def load(self,):
 		super().load()
@@ -1110,9 +1110,8 @@ class description(module):
 		if self.rerender:
 			print("Rerendering!")
 			self.output()
+			self.save()
 
-	def verify(self, new_state):
-		pass
 
 	def description(self):
 		return "Creates a description for Youtube with timestamps for the Tracks"
@@ -1387,17 +1386,21 @@ def conf_default(conf):
 
 	return conf
 
+mappings = {"tags" : Updatemp3tags,
+			"Album" : RenameAlbum,
+			"rec_time" : ChangeRecTime,
+			}
+
 def getDiff(old_state, new_state):
 	diff = []
-	if old_state["tags"]!=new_state["tags"]:
-		diff.append(Updatemp3tags(new_state["tags"]))
-
-	if old_state["Album"]!=new_state["Album"]:
-		diff.append(RenameAlbum(new_state["Album"]))
-		diff.append(Updatemp3tags(new_state["tags"]))
-
-	if old_state["rec_time"]!=new_state["rec_time"]:
-		diff.append(ChangeRecTime(new_state["rec_time"]))
+	for key in mappings:
+		try:
+			if old_state[key]!=new_state[key]:
+				diff.append(mappings[key](new_state[key]))
+		except Exception as e:
+			print("Warning Config file is old. Missing field: " + str(e))
+			old_state[key]=conf_default()[key]
+			diff.append(mappings[key](new_state[key]))
 
 	for module in modules:
 		if module.name+"_path" in old_state:
