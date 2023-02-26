@@ -412,9 +412,9 @@ def setName(conf, name):
 	conf["Album"] = name
 
 def conf_detect(conf):
-	dir_add(conf, True, os.curdir)
 	#album name
 	setName(conf, getName())
+	dir_add(conf, True, os.curdir)
 	conf["tags"]["Cover"]  = getCover()
 	conf["Video"] = getVideo()
 	print("Album name: " + new_state["Album"])
@@ -603,6 +603,7 @@ class module:
 
 	def load(self):
 		self.Tracks = self.state["Tracks"]
+		Tracks_sort(self.Tracks)
 		self.Album = self.state["Album"]
 	def start(self):
 		pass
@@ -1049,7 +1050,6 @@ class video(module_hash):
 
 	def extend_audio(self, inst):
 		audio = ffmpeg_input()
-		Tracks_sort(self.Tracks)
 		audio.streams=[t.path for t in self.Tracks]
 		audio.map = ["a"]
 		inst.output.attributes+=["b:a 320k", "acodec libmp3lame"]
@@ -1096,6 +1096,9 @@ class video(module_hash):
 		Delete("tmp_"+self.path)
 
 class description(module_hash):
+	def __init__(self):
+		super().__init__()
+		self.rerender=False
 
 	def load(self,):
 		super().load()
@@ -1143,15 +1146,16 @@ class description(module_hash):
 		Delete(self.path)
 
 class full(module_hash):
+	def __init__(self):
+		super().__init__()
+		self.rerender=False
 
 	def load(self,):
 		super().load()
 		self.path = self.state[self.name+"_path"]
-		self.Video = self.state["Video"]
-
 
 	def start(self):
-		self.rerender =False
+		self.rerender = False
 
 	def end(self):
 		if self.rerender:
@@ -1171,7 +1175,6 @@ class full(module_hash):
 		elif task == "NewTrack" or task == "UpdateTrack" or task == "DeleteTrack" or task == "Reorder":
 			self.rerender=True
 
-		return False
 
 	def render(self):
 		audio = ffmpeg_input()
@@ -1357,7 +1360,7 @@ void loop(){};""")
 
 
 
-modules = [ mp3(), wav(), full(), video(), description(), tl_sketch() ]
+modules = [ mp3(), wav(), full(), description(), tl_sketch(), video() ]
 
 def conf_default(conf):
 	conf.clear()
