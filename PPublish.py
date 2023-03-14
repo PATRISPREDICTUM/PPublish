@@ -8,6 +8,7 @@ import hashlib
 import pickle
 import re
 import audioread
+from deepdiff import DeepDiff
 
 current_states = {}
 new_state = {}
@@ -124,7 +125,7 @@ class ChangePath:
 class UpdateTrack:
 	def __init__(self, old_md5, new_md5):
 		self.md5 = old_md5
-		self.new = new_md5
+		self.new_md5 = new_md5
 
 	def apply(self, state):
 		if (track := getTrackByMD5(state["Tracks"], self.md5)) == None:
@@ -412,9 +413,9 @@ def setName(conf, name):
 	conf["Album"] = name
 
 def conf_detect(conf):
-	dir_add(conf, True, os.curdir)
 	#album name
 	setName(conf, getName())
+	dir_add(conf, True, os.curdir)
 	conf["tags"]["Cover"]  = getCover()
 	conf["Video"] = getVideo()
 	print("Album name: " + new_state["Album"])
@@ -603,6 +604,7 @@ class module:
 
 	def load(self):
 		self.Tracks = self.state["Tracks"]
+		Tracks_sort(self.Tracks)
 		self.Album = self.state["Album"]
 	def start(self):
 		pass
@@ -735,6 +737,7 @@ class mp3(module_folder):
 									f"metadata title=\"{track.name}\"",
 									f"metadata track=\"{track.index}\"",
 									f"metadata album_artist=\"{self.tags['Artist']}\"",
+									f"metadata date=\"{self.tags['Year']}\"",
 									f"metadata album=\"{self.Album}\"",
 									f"metadata genre=\"{self.tags['Genre']}\"",
 									f"metadata artist=\"{','.join(self.tags['feat'])}\""]
@@ -787,7 +790,7 @@ class mp3(module_folder):
 		elif task == "DeleteTrack":
 			self.delete(update.track)
 
-		elif task == "Updatemp3tags":
+		elif task == "Updatemp3tags" or task=="RenameAlbum":
 			for track in self.Tracks:
 				self.retag_track(track)
 
@@ -1049,7 +1052,6 @@ class video(module_hash):
 
 	def extend_audio(self, inst):
 		audio = ffmpeg_input()
-		Tracks_sort(self.Tracks)
 		audio.streams=[t.path for t in self.Tracks]
 		audio.map = ["a"]
 		inst.output.attributes+=["b:a 320k", "acodec libmp3lame"]
@@ -1095,7 +1097,10 @@ class video(module_hash):
 		Delete(self.path)
 		Delete("tmp_"+self.path)
 
-class description(module):
+class description(module_hash):
+	def __init__(self):
+		super().__init__()
+		self.rerender=False
 
 	def load(self,):
 		super().load()
@@ -1110,9 +1115,8 @@ class description(module):
 		if self.rerender:
 			print("Rerendering!")
 			self.output()
+			self.save()
 
-	def verify(self, new_state):
-		pass
 
 	def description(self):
 		return "Creates a description for Youtube with timestamps for the Tracks"
@@ -1144,15 +1148,16 @@ class description(module):
 		Delete(self.path)
 
 class full(module_hash):
+	def __init__(self):
+		super().__init__()
+		self.rerender=False
 
 	def load(self,):
 		super().load()
 		self.path = self.state[self.name+"_path"]
-		self.Video = self.state["Video"]
-
 
 	def start(self):
-		self.rerender =False
+		self.rerender = False
 
 	def end(self):
 		if self.rerender:
@@ -1172,7 +1177,6 @@ class full(module_hash):
 		elif task == "NewTrack" or task == "UpdateTrack" or task == "DeleteTrack" or task == "Reorder":
 			self.rerender=True
 
-		return False
 
 	def render(self):
 		audio = ffmpeg_input()
@@ -1358,7 +1362,7 @@ void loop(){};""")
 
 
 
-modules = [ mp3(), wav(), full(), video(), description(), tl_sketch() ]
+modules = [ mp3(), wav(), full(), description(), tl_sketch(), video() ]
 
 def conf_default(conf):
 	conf.clear()
@@ -1373,6 +1377,7 @@ def conf_default(conf):
 	conf["tags"]={}
 	conf["tags"]["Artist"] = "PATRIS PREDICTUM"
 	conf["tags"]["Genre"]  = "dominationdead"
+	conf["tags"]["Year"]   = datetime.date.today().year
 	conf["tags"]["feat"]   = []
 	conf["tags"]["Cover"]  = None
 	conf["Video"] = None
@@ -1387,17 +1392,26 @@ def conf_default(conf):
 
 	return conf
 
+mappings = {"tags" : Updatemp3tags,
+			"Album" : RenameAlbum,
+			"rec_time" : ChangeRecTime,
+			}
+
 def getDiff(old_state, new_state):
 	diff = []
-	if old_state["tags"]!=new_state["tags"]:
-		diff.append(Updatemp3tags(new_state["tags"]))
+	for key in mappings:
+		try:
+			ddiff = DeepDiff(new_state[key], old_state[key], ignore_order=True)
+			if ddiff:
+				if "dictionary_item_added" in ddiff:
+					print("new field")
+					dict_merge(new_state[key], conf_default({})[key])
 
-	if old_state["Album"]!=new_state["Album"]:
-		diff.append(RenameAlbum(new_state["Album"]))
-		diff.append(Updatemp3tags(new_state["tags"]))
-
-	if old_state["rec_time"]!=new_state["rec_time"]:
-		diff.append(ChangeRecTime(new_state["rec_time"]))
+				diff.append(mappings[key](new_state[key]))
+		except Exception as e:
+			print("Warning Config file is old. Missing field: " + str(e))
+			old_state[key]=conf_default({})[key]
+			diff.append(mappings[key](new_state[key]))
 
 	for module in modules:
 		if module.name+"_path" in old_state:
@@ -1462,6 +1476,17 @@ def module_run(current_state, new_state, module):
 	module.load()
 	return module.end()
 
+from typing import Dict
+
+def dict_merge(master, slave):
+	for e in slave:
+		if e in master:
+			if type(master[e]) is type(slave[e]):
+				if isinstance(master[e], Dict):
+					dict_merge(master[e], slave[e])
+		else:
+			master[e] = slave[e]
+
 
 savefile = ".ppub"
 def pub_save():
@@ -1482,6 +1507,9 @@ if savefile in os.listdir():
 			print("New Module " + module.name)
 			current_states[module.name] = conf_default({})
 			new_state[module.name+"_path"]=""
+		else:
+			dict_merge(current_states[module.name], conf_default({}))
+
 		module.state_set(current_states[module.name])
 
 
